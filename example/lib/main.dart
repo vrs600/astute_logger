@@ -1,7 +1,7 @@
 import 'package:astute_logger/astute_logger.dart';
 
 void main() {
-  final log = Logger("ExampleService");
+  final log = AstuteLogger("ExampleService");
 
   // 🔵 Basic message
   log.write(message: "App started", level: LogLevel.info);
@@ -19,16 +19,11 @@ void main() {
   log.logWithColor("Custom colored success log", color: LogColor.green.code);
 
   // 🧾 Pretty JSON
-  log.logJson({
-    "id": 1,
-    "name": "John",
-    "role": "admin",
-  });
+  log.logJson({"id": 1, "name": "John", "role": "admin"});
 
   // 🧾 Pretty JSON string
   log.write(
     message: '{"status": "ok", "items": [1,2,3]}',
-    prettyPrint: true,
     level: LogLevel.info,
   );
 

@@ -1,11 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/foundation.dart';
 
-/// Enum representing different levels of log severity.
 enum LogLevel { debug, info, warning, error }
 
-/// Enum representing ANSI terminal colors for log output.
 enum LogColor {
   green('32'),
   blue('34'),
@@ -16,72 +15,157 @@ enum LogColor {
   const LogColor(this.code);
 }
 
-/// A simple yet powerful logger utility for Flutter apps.
-///
-/// Supports:
-/// - Automatic timestamps and method names
-/// - Color-coded log levels
-/// - Pretty-printing of JSON and lists
-/// - Execution time measurement
-///
-/// Usage:
-/// ```dart
-/// final log = Logger("AuthService");
-/// log.write(message: "User signed in", level: LogLevel.info);
-/// ```
+class _LogEvent {
+  final Logger logger;
+  final String text;
+  final bool prettyPrint;
+
+  const _LogEvent({
+    required this.logger,
+    required this.text,
+    required this.prettyPrint,
+  });
+}
+
+abstract final class LoggerContext {
+  static const Symbol requestId = Symbol('logger_request_id');
+  static const Symbol extraContext = Symbol('logger_extra_context');
+
+  /// Runs [body] inside a new asynchronous Zone injected with logging metadata.
+  static R runWithContext<R>({
+    required String requestId,
+    Map<String, dynamic>? extra,
+    required R Function() body,
+  }) {
+    return Zone.current.fork(
+      zoneValues: {
+        LoggerContext.requestId: requestId,
+        if (extra != null) LoggerContext.extraContext: extra,
+      },
+    ).run(body);
+  }
+}
+
 class Logger {
   final String title;
-
   Logger(this.title);
 
   // ------------------------------------------------------------------
-  // 🟩 Basic log message
+  // 📥 Async Logging Queue Pipeline
   // ------------------------------------------------------------------
+  static final StreamController<_LogEvent> _queueController =
+      StreamController<_LogEvent>()..stream.listen(_processLogQueue);
 
-  /// Logs a message with optional pretty-printing and color coding.
-  ///
-  /// [message] - The message to log.
-  /// [prettyPrint] - If true, tries to format the message as JSON.
-  /// [level] - The [LogLevel] used to determine severity and color.
+  static void _processLogQueue(_LogEvent event) {
+    if (event.prettyPrint) {
+      event.logger.logJson(event.text);
+    } else {
+      log(event.text);
+    }
+  }
+
   void write({
     required String message,
     bool prettyPrint = false,
     required LogLevel level,
+    Map<String, dynamic>? extra,
   }) {
     if (kReleaseMode) return;
 
-    String method = currentMethodName(2);
+    final scrubbedMessage = _redactSensitiveData(message);
+    final methodLabel = _resolveMethodName();
 
+    // 1. Gather explicit parameter extra metadata
+    final Map<String, dynamic> combinedContext = {};
+    if (extra != null) {
+      combinedContext.addAll(extra);
+    }
+
+    // 2. Extract Zone-propagated metadata safely
+    final zoneRequestId = Zone.current[LoggerContext.requestId] as String?;
+    final zoneExtra =
+        Zone.current[LoggerContext.extraContext] as Map<String, dynamic>?;
+
+    if (zoneExtra != null) {
+      combinedContext.addAll(zoneExtra);
+    }
+
+    // 3. Construct context metadata tag
+    String contextTag = '';
+    if (zoneRequestId != null) {
+      contextTag += '[ReqID: $zoneRequestId]';
+    }
+    if (combinedContext.isNotEmpty) {
+      contextTag += ' [Ctx: $combinedContext]';
+    }
+    if (contextTag.isNotEmpty) {
+      contextTag = '$contextTag ';
+    }
     final now = DateTime.now();
     final localTimestamp = "${now.day}-${_two(now.month)}-${_two(now.year)} "
         "${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}";
 
     String logText =
-        "[$localTimestamp] [${getAppMode()}] $title::$method -> $message";
+        "[$localTimestamp] [${getAppMode().name.toUpperCase()}] $contextTag$title::$methodLabel -> $scrubbedMessage";
 
-    // 🎨 Apply color based on log level
     logText = _colorize(logText, _getColorForLevel(level));
 
-    if (prettyPrint) {
-      logJson(logText);
-    } else {
-      log(logText);
+    _queueController.add(_LogEvent(
+      logger: this,
+      text: logText,
+      prettyPrint: prettyPrint,
+    ));
+  }
+
+  // ------------------------------------------------------------------
+  // 🟨 Stack Trace — platform-aware
+  // ------------------------------------------------------------------
+
+  /// Extracts a readable method name from the stack trace.
+  /// Falls back gracefully on web where frames are JS-compiled.
+  String _resolveMethodName() {
+    if (kIsWeb) {
+      // Web stack frames are JS-compiled and unreliable — skip extraction
+      return 'web';
+    }
+    return _nativeMethodName(frameIndex: 3);
+  }
+
+  /// Parses a native (VM) stack frame to extract `ClassName.methodName`.
+  ///
+  /// Frame index 3 skips: [0] _nativeMethodName, [1] _resolveMethodName,
+  /// [2] write, [3] = your actual caller.
+  String _nativeMethodName({int frameIndex = 3}) {
+    try {
+      final frames = StackTrace.current.toString().split('\n');
+      if (frames.length <= frameIndex) return 'unknown';
+
+      final frame = frames[frameIndex].trim();
+
+      // Native Dart VM format:
+      // "#3      ClassName.methodName (package:app/file.dart:42:5)"
+      final vmRegex = RegExp(r'#\d+\s+([\w.<>]+)\s+\(');
+      final vmMatch = vmRegex.firstMatch(frame);
+      if (vmMatch != null) {
+        final full = vmMatch.group(1)!; // e.g. "AuthService.login"
+        // Strip leading "new " for constructors, trim noise
+        return full.replaceFirst(RegExp(r'^new\s+'), '');
+      }
+
+      return 'unknown';
+    } catch (_) {
+      return 'unknown';
     }
   }
 
-  /// Pads numbers less than 10 with a leading zero.
+  // ------------------------------------------------------------------
+  // helpers, JSON, color, list methods unchanged below ...
+  // ------------------------------------------------------------------
+
   String _two(int n) => n.toString().padLeft(2, '0');
 
-  // ------------------------------------------------------------------
-  // 🟦 JSON Pretty Printing
-  // ------------------------------------------------------------------
-
-  /// Pretty prints a JSON object or string to the console.
-  ///
-  /// Automatically detects if [jsonObject] is a string or map/list.
   void logJson(dynamic jsonObject) {
     if (!kDebugMode) return;
-
     try {
       String prettyString;
       if (jsonObject is String) {
@@ -96,62 +180,45 @@ class Logger {
     }
   }
 
-  // ------------------------------------------------------------------
-  // 🟨 Stack Trace Utilities
-  // ------------------------------------------------------------------
-
-  /// Extracts the current method name from the stack trace.
-  ///
-  /// [frameIndex] specifies how many frames to go up in the stack.
-  String currentMethodName([int frameIndex = 1]) {
-    final stack = StackTrace.current.toString().split('\n');
-    if (stack.length <= frameIndex) return 'unknown';
-    final regex = RegExp(r'#\d+\s+([^(]+)');
-    return regex.firstMatch(stack[frameIndex])?.group(1) ?? 'unknown';
+  void logJsonList(List<dynamic> jsonList) {
+    if (!kDebugMode) return;
+    try {
+      log(const JsonEncoder.withIndent('  ').convert(jsonList), name: title);
+    } catch (e) {
+      log('Failed to pretty print JSON list: $e', name: title);
+    }
   }
 
-  // ------------------------------------------------------------------
-  // 🟥 Performance Measurement
-  // ------------------------------------------------------------------
+  void logPrettyList<T>(List<T> list, {String? label}) {
+    if (!kDebugMode) return;
+    try {
+      final prettyString = const JsonEncoder.withIndent('  ').convert(list);
+      final header = label != null ? '[$label]\n' : '';
+      log('$header$prettyString', name: title);
+    } catch (e) {
+      log('Failed to pretty print list: $e', name: title);
+    }
+  }
 
-  /// Measures and logs the execution time of a synchronous function.
-  ///
-  /// Example:
-  /// ```dart
-  /// log.logExecutionTime("Compute sum", () {
-  ///   return list.reduce((a, b) => a + b);
-  /// });
-  /// ```
   T logExecutionTime<T>(String message, T Function() func) {
     final stopwatch = Stopwatch()..start();
     final result = func();
     stopwatch.stop();
     write(
-        message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
-        level: LogLevel.debug);
+      message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
+      level: LogLevel.debug,
+    );
     return result;
   }
 
-  // ------------------------------------------------------------------
-  // 🧩 Color Handling
-  // ------------------------------------------------------------------
-
-  /// Wraps a message in ANSI color escape codes.
-  String _colorize(String message, String colorCode) =>
-      "\x1B[${colorCode}m$message\x1B[0m";
-
-  /// Logs a message with a specific color.
-  ///
-  /// Example:
-  /// ```dart
-  /// log.logWithColor("Success", color: LogColor.green.code);
-  /// ```
   void logWithColor(String message, {String color = '32'}) {
     if (!kDebugMode) return;
     log(_colorize("$title : $message", color));
   }
 
-  /// Returns the ANSI color code corresponding to a [LogLevel].
+  String _colorize(String message, String colorCode) =>
+      "\x1B[${colorCode}m$message\x1B[0m";
+
   String _getColorForLevel(LogLevel level) {
     switch (level) {
       case LogLevel.debug:
@@ -165,56 +232,48 @@ class Logger {
     }
   }
 
-  // ------------------------------------------------------------------
-  // 🧾 List Logging
-  // ------------------------------------------------------------------
-
-  /// Pretty prints a list of JSON objects.
-  void logJsonList(List<dynamic> jsonList) {
-    if (!kDebugMode) return;
-
-    try {
-      String prettyString =
-      const JsonEncoder.withIndent('  ').convert(jsonList);
-      log(prettyString, name: title);
-    } catch (e) {
-      log('Failed to pretty print JSON list: $e', name: title);
-    }
-  }
-
-  /// Pretty prints a generic list in formatted JSON style.
-  ///
-  /// [label] can be provided to display a title before the list.
-  void logPrettyList<T>(List<T> list, {String? label}) {
-    if (!kDebugMode) return;
-
-    try {
-      final prettyString = const JsonEncoder.withIndent('  ').convert(list);
-      final header = label != null ? '[$label]' : '';
-      log('$header\n$prettyString', name: title);
-    } catch (e) {
-      log('Failed to pretty print list: $e', name: title);
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // 🧠 Environment Detection
-  // ------------------------------------------------------------------
-
-  /// Returns the current [LogLevel] based on Flutter build mode.
-  ///
-  /// - `debug` → Debug mode
-  /// - `info` → Profile mode
-  /// - `error` → Release mode
   LogLevel getAppMode() {
-    if (kDebugMode) {
-      return LogLevel.debug;
-    } else if (kProfileMode) {
-      return LogLevel.info;
-    } else if (kReleaseMode) {
-      return LogLevel.error;
-    } else {
-      return LogLevel.warning; // fallback
+    if (kDebugMode) return LogLevel.debug;
+    if (kProfileMode) return LogLevel.info;
+    if (kReleaseMode) return LogLevel.error;
+    return LogLevel.warning;
+  }
+
+  // ------------------------------------------------------------------
+  // 🔒 Sensitive Data Redaction Engine
+  // ------------------------------------------------------------------
+
+  static final List<RegExp> _redactionRules = [
+    // 1. Bearer / Authorization tokens
+    RegExp(
+        r'(?:bearer|auth|token|password|secret)["\s:][=\s"]*([a-zA-Z0-9_\-\.\~\+\/]+=*)',
+        caseSensitive: false),
+    // 2. Email Addresses
+    RegExp(r'[a-zA-Z0-9.!#$%&'
+        r'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*'),
+    // 3. Credit Cards (Visa, Mastercard, Amex, Discover structural matches)
+    RegExp(
+        r'\b(?:4[0-9]{12}(?:[0-9]{3})?|[5S][1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11})\b'),
+  ];
+
+  String _redactSensitiveData(String source) {
+    if (source.isEmpty) return source;
+    String cleaned = source;
+
+    for (final rule in _redactionRules) {
+      cleaned = cleaned.replaceAllMapped(rule, (match) {
+        final fullMatch = match.group(0)!;
+        // If the match captures a specific secret group value (like group 1 in auth tokens), redact only that group
+        if (match.groupCount >= 1 && match.group(1) != null) {
+          final secret = match.group(1)!;
+          if (secret.trim().isNotEmpty) {
+            return fullMatch.replaceFirst(secret, '[REDACTED]');
+          }
+        }
+        // Otherwise, replace the entire structured match value (like emails/cards)
+        return '[REDACTED]';
+      });
     }
+    return cleaned;
   }
 }

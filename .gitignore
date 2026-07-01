@@ -29,3 +29,8 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Ignore the entire example project
+example/
+.vscode/github-accounts.json
+
