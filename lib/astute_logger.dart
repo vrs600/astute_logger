@@ -311,4 +311,33 @@ class Logger {
     }
     return cleaned;
   }
+
+  Future<T> logExecutionTimeAsync<T>(
+    String message,
+    Future<T> Function() func,
+  ) async {
+    final stopwatch = Stopwatch()..start();
+    final result = await func();
+    stopwatch.stop();
+    write(
+      message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
+      level: LogLevel.debug,
+    );
+    return result;
+  }
+
+  void logError(dynamic error, StackTrace stackTrace, {String? message}) {
+    write(
+      message: message ?? 'Exception: $error\n$stackTrace',
+      level: LogLevel.error,
+    );
+  }
+
+  void logIf(
+    bool condition, {
+    required String message,
+    required LogLevel level,
+  }) {
+    if (condition) write(message: message, level: level);
+  }
 }
