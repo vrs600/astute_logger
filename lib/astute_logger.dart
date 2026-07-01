@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 enum LogLevel { debug, info, warning, error }
 
@@ -53,14 +55,47 @@ class Logger {
   // ------------------------------------------------------------------
   // 📥 Async Logging Queue Pipeline
   // ------------------------------------------------------------------
+  static File? _logFile;
   static final StreamController<_LogEvent> _queueController =
       StreamController<_LogEvent>()..stream.listen(_processLogQueue);
 
-  static void _processLogQueue(_LogEvent event) {
+  static Future<void> _processLogQueue(_LogEvent event) async {
+    // 1. Standard console logging output
     if (event.prettyPrint) {
       event.logger.logJson(event.text);
     } else {
       log(event.text);
+    }
+
+    // 2. Persistent file recording output
+    try {
+      if (_logFile == null) {
+        final directory = await getApplicationDocumentsDirectory();
+        _logFile = File('${directory.path}/app_logs.txt');
+      }
+
+      // Strip ANSI color escape characters before writing text out to the file
+      final cleanText = event.text.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
+
+      await _logFile!.writeAsString(
+        '$cleanText\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (e) {
+      log('Failed to write log to persistent file storage: $e',
+          name: 'LoggerError');
+    }
+  }
+
+  /// Public access utility method to retrieve the raw file containing persisted logs
+  static Future<File?> getLogFile() async {
+    if (_logFile != null) return _logFile;
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      return File('${directory.path}/app_logs.txt');
+    } catch (_) {
+      return null;
     }
   }
 
