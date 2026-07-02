@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Logger Tests', () {
-    late Logger logger;
+    late AstuteLogger logger;
 
     setUp(() {
-      logger = Logger('TestClass');
+      logger = AstuteLogger('TestClass');
     });
 
     // ===================================================================
@@ -48,7 +48,7 @@ void main() {
     // ✅ TEST 3: Class Name > Method Format Construction
     // ===================================================================
     test('Log format includes ClassName::methodName pattern', () {
-      final testLogger = Logger('AuthService');
+      final testLogger = AstuteLogger('AuthService');
 
       // Test format construction
       final title = 'AuthService';
@@ -86,7 +86,7 @@ void main() {
     // ✅ TEST 6: Log File Path Resolution
     // ===================================================================
     test('getLogFile() returns a valid file reference', () async {
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       expect(
         logFile,
         isNotNull,
@@ -106,7 +106,7 @@ void main() {
       // Wait for async queue to process
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       expect(
         logFile,
         isNotNull,
@@ -134,7 +134,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         final timestampPattern =
@@ -152,7 +152,7 @@ void main() {
     // ✅ TEST 9: Logger Title is Included
     // ===================================================================
     test('Logger title (class name) appears in log output', () async {
-      final customLogger = Logger('MyCustomClass');
+      final customLogger = AstuteLogger('MyCustomClass');
       customLogger.write(
         message: 'Test with custom class',
         level: LogLevel.info,
@@ -160,7 +160,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         expect(
@@ -185,7 +185,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
 
@@ -215,7 +215,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
 
@@ -245,7 +245,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
 
@@ -279,7 +279,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         expect(
@@ -308,7 +308,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         expect(
@@ -342,7 +342,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 1000));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
 
@@ -533,8 +533,8 @@ void main() {
     // ✅ TEST 27: Multiple Logger Instances
     // ===================================================================
     test('Multiple logger instances work independently', () {
-      final logger1 = Logger('Class1');
-      final logger2 = Logger('Class2');
+      final logger1 = AstuteLogger('Class1');
+      final logger2 = AstuteLogger('Class2');
 
       expect(() {
         logger1.write(message: 'From Class1', level: LogLevel.debug);
@@ -570,7 +570,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         expect(content.isNotEmpty, isTrue);
@@ -588,7 +588,7 @@ void main() {
 
       await Future.delayed(Duration(milliseconds: 800));
 
-      final logFile = await Logger.getLogFile();
+      final logFile = await AstuteLogger.getLogFile();
       if (logFile != null && logFile.existsSync()) {
         final content = await logFile.readAsString();
         expect(content.isNotEmpty, isTrue);

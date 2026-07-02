@@ -18,7 +18,7 @@ enum LogColor {
 }
 
 class _LogEvent {
-  final Logger logger;
+  final AstuteLogger logger;
   final String text;
   final bool prettyPrint;
 
@@ -48,9 +48,9 @@ abstract final class LoggerContext {
   }
 }
 
-class Logger {
+class AstuteLogger {
   final String title;
-  Logger(this.title);
+  AstuteLogger(this.title);
 
   // ------------------------------------------------------------------
   // 📥 Async Logging Queue Pipeline

@@ -1,121 +1,236 @@
+import 'dart:async';
+
 import 'package:astute_logger/astute_logger.dart';
 
 Future<void> main() async {
-  final AstuteLogger log = AstuteLogger("ExampleService");
+  final logger = AstuteLogger("ExampleService");
 
-  // ============================================================
-  // Basic Logging
-  // ============================================================
+  print("\n================ Astute Logger Demo ================\n");
 
-  log.write(message: "Application started", level: LogLevel.info);
+  // ==========================================================
+  // 1. Basic Logging
+  // ==========================================================
 
-  log.write(message: "Fetching user profile...", level: LogLevel.debug);
-
-  log.write(message: "Network connection is slow", level: LogLevel.warning);
-
-  log.write(message: "Failed to fetch user details", level: LogLevel.error);
-
-  // ============================================================
-  // Colored Console Output
-  // ============================================================
-
-  log.logWithColor(
-    "Operation completed successfully",
-    color: LogColor.green.code,
-  );
-
-  // ============================================================
-  // Pretty JSON
-  // ============================================================
-
-  log.logJson({
-    "id": 1,
-    "name": "John Doe",
-    "role": "Administrator",
-    "active": true,
-  });
-
-  // ============================================================
-  // Pretty JSON List
-  // ============================================================
-
-  log.logJsonList([
-    {"id": 1, "name": "Alice"},
-    {"id": 2, "name": "Bob"},
-  ]);
-
-  // ============================================================
-  // Pretty Dart List
-  // ============================================================
-
-  log.logPrettyList(["Apple", "Banana", "Orange"], label: "Fruits");
-
-  // ============================================================
-  // Pretty Print JSON String
-  // ============================================================
-
-  log.write(
-    message: '{"status":"success","items":[1,2,3]}',
+  logger.write(
+    message: "Application started successfully",
     level: LogLevel.info,
-    prettyPrint: true,
   );
 
-  // ============================================================
-  // Extra Metadata
-  // ============================================================
-
-  log.write(
-    message: "User login successful",
-    level: LogLevel.info,
-    extra: {"userId": "USR-1001", "device": "Android", "version": "1.0.0"},
-  );
-
-  // ============================================================
-  // Automatic Sensitive Data Redaction
-  // ============================================================
-
-  log.write(
-    message: "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+  logger.write(
+    message: "Loading user profile...",
     level: LogLevel.debug,
   );
 
-  log.write(message: "User email: john.doe@example.com", level: LogLevel.info);
+  logger.write(
+    message: "Slow internet connection detected",
+    level: LogLevel.warning,
+  );
 
-  log.write(message: "Credit Card: 4532015112830366", level: LogLevel.warning);
+  logger.write(
+    message: "Unable to fetch latest data",
+    level: LogLevel.error,
+  );
 
-  // ============================================================
-  // Request Context
-  // ============================================================
+  // ==========================================================
+  // 2. Colored Console Output
+  // ==========================================================
+
+  logger.logWithColor(
+    "Green success message",
+    color: LogColor.green.code,
+  );
+
+  logger.logWithColor(
+    "Blue informational message",
+    color: LogColor.blue.code,
+  );
+
+  logger.logWithColor(
+    "Yellow warning message",
+    color: LogColor.yellow.code,
+  );
+
+  logger.logWithColor(
+    "Red error message",
+    color: LogColor.red.code,
+  );
+
+  // ==========================================================
+  // 3. Pretty JSON
+  // ==========================================================
+
+  logger.logJson({
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "roles": ["Admin", "Manager"],
+    "active": true,
+  });
+
+  // ==========================================================
+  // 4. Pretty JSON String
+  // ==========================================================
+
+  logger.write(
+    message: '''
+{
+  "status":"success",
+  "items":[1,2,3],
+  "message":"Everything works!"
+}
+''',
+    prettyPrint: true,
+    level: LogLevel.info,
+  );
+
+  // ==========================================================
+  // 5. Pretty JSON List
+  // ==========================================================
+
+  logger.logJsonList([
+    {"id": 1, "name": "Alice"},
+    {"id": 2, "name": "Bob"},
+    {"id": 3, "name": "Charlie"},
+  ]);
+
+  // ==========================================================
+  // 6. Pretty List
+  // ==========================================================
+
+  logger.logPrettyList(
+    ["Apple", "Banana", "Orange", "Mango"],
+    label: "Fruits",
+  );
+
+  // ==========================================================
+  // 7. Extra Metadata
+  // ==========================================================
+
+  logger.write(
+    message: "User logged in",
+    level: LogLevel.info,
+    extra: {
+      "userId": "USR-1001",
+      "device": "Android",
+      "version": "1.0.0",
+    },
+  );
+
+  // ==========================================================
+  // 8. Request Context
+  // ==========================================================
 
   await LoggerContext.runWithContext(
-    requestId: "REQ-2026-0001",
-    extra: {"userId": "USR-1001", "platform": "Android"},
+    requestId: "REQ-2026-001",
+    extra: {
+      "tenant": "Acme Corp",
+      "environment": "Development",
+    },
     body: () {
-      log.write(
-        message: "Authenticated request received",
+      logger.write(
+        message: "Processing authenticated request",
         level: LogLevel.info,
+      );
+
+      logger.write(
+        message: "Loading customer profile",
+        level: LogLevel.debug,
       );
     },
   );
 
-  // ============================================================
-  // Execution Time
-  // ============================================================
+  // ==========================================================
+  // 9. Sensitive Data Redaction
+  // ==========================================================
 
-  final result = log.logExecutionTime("Compute Sum", () {
-    final list = List.generate(100000, (i) => i);
-    return list.reduce((a, b) => a + b);
-  });
+  logger.write(
+    message:
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    level: LogLevel.debug,
+  );
 
-  log.write(message: "Result = $result", level: LogLevel.info);
+  logger.write(
+    message: "Customer email: john.doe@example.com",
+    level: LogLevel.info,
+  );
 
-  // ============================================================
-  // Persistent Log File
-  // ============================================================
+  logger.write(
+    message: "Payment card: 4532015112830366",
+    level: LogLevel.warning,
+  );
 
-  final logFile = await AstuteLogger.getLogFile();
+  logger.write(
+    message: "Password = mySuperSecretPassword",
+    level: LogLevel.error,
+  );
 
-  if (logFile != null) {
-    log.write(message: "Logs saved to: ${logFile.path}", level: LogLevel.info);
+  // ==========================================================
+  // 10. Synchronous Execution Time
+  // ==========================================================
+
+  final sum = logger.logExecutionTime(
+    "Calculate Sum",
+        () {
+      final numbers = List.generate(100000, (i) => i);
+      return numbers.reduce((a, b) => a + b);
+    },
+  );
+
+  logger.write(
+    message: "Sum = $sum",
+    level: LogLevel.info,
+  );
+
+  // ==========================================================
+  // 11. Asynchronous Execution Time
+  // ==========================================================
+
+  await logger.logExecutionTimeAsync(
+    "Fake API Request",
+        () async {
+      await Future.delayed(const Duration(milliseconds: 800));
+      return true;
+    },
+  );
+
+  // ==========================================================
+  // 12. Conditional Logging
+  // ==========================================================
+
+  const isPremiumUser = true;
+
+  logger.logIf(
+    isPremiumUser,
+    message: "Premium feature unlocked",
+    level: LogLevel.info,
+  );
+
+  // ==========================================================
+  // 13. Exception Logging
+  // ==========================================================
+
+  try {
+    throw Exception("Something went wrong!");
+  } catch (e, stackTrace) {
+    logger.logError(
+      e,
+      stackTrace,
+      message: "Unexpected exception occurred",
+    );
   }
+
+  // ==========================================================
+  // 14. Persistent Log File
+  // ==========================================================
+
+  final file = await AstuteLogger.getLogFile();
+
+  if (file != null) {
+    logger.write(
+      message: "Logs are stored at: ${file.path}",
+      level: LogLevel.info,
+    );
+  }
+
+  print("\n=============== Demo Completed ===============");
 }
