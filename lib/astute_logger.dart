@@ -48,36 +48,64 @@ abstract final class LoggerContext {
   }
 }
 
+class LogConfig {
+  final bool enableRedaction;
+  final LogLevel minimumLogLevel;
+  final bool enableConsoleOutput;
+  final bool enableFileOutput;
+  final String logFileName;
+
+  const LogConfig({
+    this.enableRedaction = true,
+    this.minimumLogLevel = LogLevel.debug,
+    this.enableConsoleOutput = true,
+    this.enableFileOutput = true,
+    this.logFileName = 'app_logs.txt',
+  });
+}
+
 class AstuteLogger {
   final String title;
-  AstuteLogger(this.title);
+  final LogConfig config;
 
+  AstuteLogger(
+    this.title, {
+    this.config = const LogConfig(),
+  });
   // ------------------------------------------------------------------
   // 📥 Async Logging Queue Pipeline
   // ------------------------------------------------------------------
-  static File? _logFile;
   static final StreamController<_LogEvent> _queueController =
       StreamController<_LogEvent>()..stream.listen(_processLogQueue);
 
+  static final Map<String, File> _logFilesCache = {};
+
   static Future<void> _processLogQueue(_LogEvent event) async {
-    // 1. Standard console logging output
-    if (event.prettyPrint) {
-      event.logger.logJson(event.text);
-    } else {
-      log(event.text);
+    final config = event.logger.config;
+
+    // 1. Conditional standard console logging output
+    if (config.enableConsoleOutput) {
+      if (event.prettyPrint) {
+        event.logger.logJson(event.text);
+      } else {
+        log(event.text);
+      }
     }
 
-    // 2. Persistent file recording output
+    // 2. Conditional persistent file recording output
+    if (!config.enableFileOutput) return;
+
     try {
-      if (_logFile == null) {
+      final fileName = config.logFileName;
+      if (!_logFilesCache.containsKey(fileName)) {
         final directory = await getApplicationDocumentsDirectory();
-        _logFile = File('${directory.path}/app_logs.txt');
+        _logFilesCache[fileName] = File('${directory.path}/$fileName');
       }
 
-      // Strip ANSI color escape characters before writing text out to the file
+      final file = _logFilesCache[fileName]!;
       final cleanText = event.text.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
 
-      await _logFile!.writeAsString(
+      await file.writeAsString(
         '$cleanText\n',
         mode: FileMode.append,
         flush: true,
@@ -88,12 +116,12 @@ class AstuteLogger {
     }
   }
 
-  /// Public access utility method to retrieve the raw file containing persisted logs
-  static Future<File?> getLogFile() async {
-    if (_logFile != null) return _logFile;
+  /// Dynamic access utility method to retrieve the raw file containing persisted logs by name
+  static Future<File?> getLogFile({String fileName = 'app_logs.txt'}) async {
     try {
+      if (_logFilesCache.containsKey(fileName)) return _logFilesCache[fileName];
       final directory = await getApplicationDocumentsDirectory();
-      return File('${directory.path}/app_logs.txt');
+      return File('${directory.path}/$fileName');
     } catch (_) {
       return null;
     }
@@ -107,7 +135,11 @@ class AstuteLogger {
   }) {
     if (kReleaseMode) return;
 
-    final scrubbedMessage = _redactSensitiveData(message);
+    // Root Cause Fix: Drop the log immediately if it's below our configured threshold
+    if (level.index < config.minimumLogLevel.index) return;
+
+    final scrubbedMessage =
+        config.enableRedaction ? _redactSensitiveData(message) : message;
     final methodLabel = _resolveMethodName();
 
     // 1. Gather explicit parameter extra metadata
@@ -159,34 +191,40 @@ class AstuteLogger {
   /// Extracts a readable method name from the stack trace.
   /// Falls back gracefully on web where frames are JS-compiled.
   String _resolveMethodName() {
-    if (kIsWeb) {
-      // Web stack frames are JS-compiled and unreliable — skip extraction
-      return 'web';
-    }
-    return _nativeMethodName(frameIndex: 3);
+    if (kIsWeb) return 'web';
+
+    // Look deeper into the stack trace to find the framework frame bypass
+    return _nativeMethodName();
   }
 
   /// Parses a native (VM) stack frame to extract `ClassName.methodName`.
   ///
   /// Frame index 3 skips: [0] _nativeMethodName, [1] _resolveMethodName,
   /// [2] write, [3] = your actual caller.
-  String _nativeMethodName({int frameIndex = 3}) {
+  String _nativeMethodName() {
     try {
       final frames = StackTrace.current.toString().split('\n');
-      if (frames.length <= frameIndex) return 'unknown';
 
-      final frame = frames[frameIndex].trim();
+      // Iterate past framework internals to discover true business logic caller
+      for (final frame in frames) {
+        if (frame.isEmpty) continue;
 
-      // Native Dart VM format:
-      // "#3      ClassName.methodName (package:app/file.dart:42:5)"
-      final vmRegex = RegExp(r'#\d+\s+([\w.<>]+)\s+\(');
-      final vmMatch = vmRegex.firstMatch(frame);
-      if (vmMatch != null) {
-        final full = vmMatch.group(1)!; // e.g. "AuthService.login"
-        // Strip leading "new " for constructors, trim noise
-        return full.replaceFirst(RegExp(r'^new\s+'), '');
+        final vmRegex = RegExp(r'#\d+\s+([\w.<>]+)\s+\(');
+        final vmMatch = vmRegex.firstMatch(frame);
+
+        if (vmMatch != null) {
+          final full = vmMatch.group(1)!;
+
+          // Skip internal logger framework wrappers dynamically
+          if (full.contains('AstuteLogger.') ||
+              full.contains('_resolveMethodName') ||
+              full.contains('_nativeMethodName')) {
+            continue;
+          }
+
+          return full.replaceFirst(RegExp(r'^new\s+'), '');
+        }
       }
-
       return 'unknown';
     } catch (_) {
       return 'unknown';
@@ -339,5 +377,34 @@ class AstuteLogger {
     required LogLevel level,
   }) {
     if (condition) write(message: message, level: level);
+  }
+
+  // Place this directly below the write() method inside the AstuteLogger class
+
+  void debug(String message, {Map<String, dynamic>? extra}) {
+    write(message: message, level: LogLevel.debug, extra: extra);
+  }
+
+  void info(String message, {Map<String, dynamic>? extra}) {
+    write(message: message, level: LogLevel.info, extra: extra);
+  }
+
+  void warning(String message, {Map<String, dynamic>? extra}) {
+    write(message: message, level: LogLevel.warning, extra: extra);
+  }
+
+  void error(String message,
+      {Map<String, dynamic>? extra, Object? error, StackTrace? stackTrace}) {
+    final combinedMessage = StringBuffer(message);
+    if (error != null) {
+      combinedMessage.write('\nError: $error');
+    }
+    if (stackTrace != null) {
+      combinedMessage.write('\nStackTrace:\n$stackTrace');
+    }
+    write(
+        message: combinedMessage.toString(),
+        level: LogLevel.error,
+        extra: extra);
   }
 }
