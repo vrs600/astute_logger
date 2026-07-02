@@ -1,6 +1,6 @@
 name: astute_logger
 description: A simple and powerful logger for Flutter apps with support for color-coding, JSON pretty-printing, and performance tracking.
-version: 0.0.1
+version: 2.2.0
 homepage: https://github.com/vrs600/astute_logger
 
 environment:
