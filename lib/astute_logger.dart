@@ -54,6 +54,7 @@ class LogConfig {
   final bool enableConsoleOutput;
   final bool enableFileOutput;
   final String logFileName;
+  final bool enableColorLogging;
 
   const LogConfig({
     this.enableRedaction = true,
@@ -61,6 +62,7 @@ class LogConfig {
     this.enableConsoleOutput = true,
     this.enableFileOutput = true,
     this.logFileName = 'app_logs.txt',
+    this.enableColorLogging = true,
   });
 }
 
@@ -169,13 +171,15 @@ class AstuteLogger {
       contextTag = '$contextTag ';
     }
     final now = DateTime.now();
-    final localTimestamp = "${now.day}-${_two(now.month)}-${_two(now.year)} "
+    final localTimestamp = "${now.day}-${_two(now.month)}-${now.year} "
         "${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}";
 
     String logText =
         "[$localTimestamp] [${getAppMode().name.toUpperCase()}] $contextTag$title::$methodLabel -> $scrubbedMessage";
 
-    logText = _colorize(logText, _getColorForLevel(level));
+    if (config.enableColorLogging) {
+      logText = _colorize(logText, _getColorForLevel(level));
+    }
 
     _queueController.add(_LogEvent(
       logger: this,
@@ -378,8 +382,6 @@ class AstuteLogger {
   }) {
     if (condition) write(message: message, level: level);
   }
-
-  // Place this directly below the write() method inside the AstuteLogger class
 
   void debug(String message, {Map<String, dynamic>? extra}) {
     write(message: message, level: LogLevel.debug, extra: extra);
