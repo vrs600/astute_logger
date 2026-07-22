@@ -1,6 +1,6 @@
 #Changelog
 
-## [2.4.0]
+## [2.5.0]
 
 ### Added
 - Multiple log levels (`debug`, `info`, `warning`, `error`, `critical`).
