@@ -1,5 +1,8 @@
 #Changelog
 
+## [2.5.1]
+- updated `README.MD`
+
 ## [2.5.0]
 
 ### Added
