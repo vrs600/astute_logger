@@ -6,14 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Represents the severity level of a log message.
-enum LogLevel { debug, info, warning, error }
+enum LogLevel { debug, info, warning, error, critical }
 
 /// Defines ANSI color codes for terminal logging.
 enum LogColor {
   green('32'),
   blue('34'),
   yellow('33'),
-  red('31');
+  red('31'),
+  magenta('35');
 
   final String code;
   const LogColor(this.code);
@@ -275,6 +276,8 @@ class AstuteLogger {
         return LogColor.yellow.code;
       case LogLevel.error:
         return LogColor.red.code;
+      case LogLevel.critical:
+        return LogColor.magenta.code;
     }
   }
 
@@ -370,5 +373,20 @@ class AstuteLogger {
         level: LogLevel.error,
         extra: extra);
   }
-}
 
+  /// Logs a critical-level message, optionally including an error and stack trace.
+  void critical(String message,
+      {Map<String, dynamic>? extra, Object? error, StackTrace? stackTrace}) {
+    final combinedMessage = StringBuffer(message);
+    if (error != null) {
+      combinedMessage.write('\nError: $error');
+    }
+    if (stackTrace != null) {
+      combinedMessage.write('\nStackTrace:\n$stackTrace');
+    }
+    write(
+        message: combinedMessage.toString(),
+        level: LogLevel.critical,
+        extra: extra);
+  }
+}
