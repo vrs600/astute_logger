@@ -1,236 +1,99 @@
-import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:astute_logger/astute_logger.dart';
 
-Future<void> main() async {
-  final logger = AstuteLogger("ExampleService");
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-  print("\n================ Astute Logger Demo ================\n");
-
-  // ==========================================================
-  // 1. Basic Logging
-  // ==========================================================
-
-  logger.write(
-    message: "Application started successfully",
-    level: LogLevel.info,
+  final logger = AstuteLogger(
+    'AstuteLoggerDemo',
+    config: const LogConfig(
+      enableConsoleOutput: true,
+      enableFileOutput: true,
+      enableColorLogging: true,
+      enableRedaction: true,
+      minimumLogLevel: LogLevel.debug,
+    ),
   );
 
-  logger.write(
-    message: "Loading user profile...",
-    level: LogLevel.debug,
+  logger.debug("Debug log");
+
+  logger.info(
+    "Application started",
+    extra: {"version": "3.0.0", "platform": "Android"},
   );
 
-  logger.write(
-    message: "Slow internet connection detected",
-    level: LogLevel.warning,
+  logger.warning("Battery level is low", extra: {"battery": "15%"});
+
+  logger.error("Unable to fetch profile", error: Exception("HTTP 500"));
+
+  logger.critical(
+    "Database connection lost",
+    error: Exception("SocketException"),
+    stackTrace: StackTrace.current,
   );
 
-  logger.write(
-    message: "Unable to fetch latest data",
-    level: LogLevel.error,
+  LoggerContext.runWithContext(
+    requestId: "REQ-20260722-001",
+    extra: {"userId": 123, "screen": "Home", "feature": "Login"},
+    body: () {
+      logger.info("This log uses LoggerContext");
+    },
   );
 
-  // ==========================================================
-  // 2. Colored Console Output
-  // ==========================================================
+  logger.info("""
+Email : john.doe@gmail.com
 
-  logger.logWithColor(
-    "Green success message",
-    color: LogColor.green.code,
-  );
+Bearer abcdefghijklmnopqrstuvwxyz123456789
 
-  logger.logWithColor(
-    "Blue informational message",
-    color: LogColor.blue.code,
-  );
+password=mySuperSecretPassword
 
-  logger.logWithColor(
-    "Yellow warning message",
-    color: LogColor.yellow.code,
-  );
+Credit Card : 4111111111111111
+""");
 
-  logger.logWithColor(
-    "Red error message",
-    color: LogColor.red.code,
-  );
-
-  // ==========================================================
-  // 3. Pretty JSON
-  // ==========================================================
-
-  logger.logJson({
-    "id": 1,
-    "name": "John Doe",
-    "email": "john@example.com",
-    "roles": ["Admin", "Manager"],
-    "active": true,
+  logger.logExecutionTime("Sorting List", () {
+    final list = List.generate(200000, (i) => 200000 - i);
+    list.sort();
   });
 
-  // ==========================================================
-  // 4. Pretty JSON String
-  // ==========================================================
+  await logger.logExecutionTimeAsync("Fake API Call", () async {
+    await Future.delayed(const Duration(seconds: 2));
+  });
 
-  logger.write(
-    message: '''
-{
-  "status":"success",
-  "items":[1,2,3],
-  "message":"Everything works!"
-}
-''',
-    prettyPrint: true,
-    level: LogLevel.info,
-  );
-
-  // ==========================================================
-  // 5. Pretty JSON List
-  // ==========================================================
-
-  logger.logJsonList([
-    {"id": 1, "name": "Alice"},
-    {"id": 2, "name": "Bob"},
-    {"id": 3, "name": "Charlie"},
-  ]);
-
-  // ==========================================================
-  // 6. Pretty List
-  // ==========================================================
-
-  logger.logPrettyList(
-    ["Apple", "Banana", "Orange", "Mango"],
-    label: "Fruits",
-  );
-
-  // ==========================================================
-  // 7. Extra Metadata
-  // ==========================================================
-
-  logger.write(
-    message: "User logged in",
-    level: LogLevel.info,
-    extra: {
-      "userId": "USR-1001",
-      "device": "Android",
-      "version": "1.0.0",
+  final json = jsonEncode({
+    "user": {
+      "id": 1,
+      "name": "John",
+      "roles": ["Admin", "Manager"],
     },
-  );
+    "permissions": ["read", "write", "delete"],
+  });
 
-  // ==========================================================
-  // 8. Request Context
-  // ==========================================================
-
-  await LoggerContext.runWithContext(
-    requestId: "REQ-2026-001",
-    extra: {
-      "tenant": "Acme Corp",
-      "environment": "Development",
-    },
-    body: () {
-      logger.write(
-        message: "Processing authenticated request",
-        level: LogLevel.info,
-      );
-
-      logger.write(
-        message: "Loading customer profile",
-        level: LogLevel.debug,
-      );
-    },
-  );
-
-  // ==========================================================
-  // 9. Sensitive Data Redaction
-  // ==========================================================
-
-  logger.write(
-    message:
-    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-    level: LogLevel.debug,
-  );
-
-  logger.write(
-    message: "Customer email: john.doe@example.com",
-    level: LogLevel.info,
-  );
-
-  logger.write(
-    message: "Payment card: 4532015112830366",
-    level: LogLevel.warning,
-  );
-
-  logger.write(
-    message: "Password = mySuperSecretPassword",
-    level: LogLevel.error,
-  );
-
-  // ==========================================================
-  // 10. Synchronous Execution Time
-  // ==========================================================
-
-  final sum = logger.logExecutionTime(
-    "Calculate Sum",
-        () {
-      final numbers = List.generate(100000, (i) => i);
-      return numbers.reduce((a, b) => a + b);
-    },
-  );
-
-  logger.write(
-    message: "Sum = $sum",
-    level: LogLevel.info,
-  );
-
-  // ==========================================================
-  // 11. Asynchronous Execution Time
-  // ==========================================================
-
-  await logger.logExecutionTimeAsync(
-    "Fake API Request",
-        () async {
-      await Future.delayed(const Duration(milliseconds: 800));
-      return true;
-    },
-  );
-
-  // ==========================================================
-  // 12. Conditional Logging
-  // ==========================================================
-
-  const isPremiumUser = true;
-
-  logger.logIf(
-    isPremiumUser,
-    message: "Premium feature unlocked",
-    level: LogLevel.info,
-  );
-
-  // ==========================================================
-  // 13. Exception Logging
-  // ==========================================================
+  logger.write(message: json, prettyPrint: true, level: LogLevel.info);
 
   try {
-    throw Exception("Something went wrong!");
+    throw Exception("Something went terribly wrong.");
   } catch (e, stackTrace) {
-    logger.logError(
-      e,
-      stackTrace,
-      message: "Unexpected exception occurred",
-    );
+    logger.error("Caught exception", error: e, stackTrace: stackTrace);
   }
 
-  // ==========================================================
-  // 14. Persistent Log File
-  // ==========================================================
+  final logFile = await AstuteLogger.getLogFile();
 
-  final file = await AstuteLogger.getLogFile();
+  if (logFile != null && await logFile.exists()) {
+    logger.info("Log file location: ${logFile.path}");
 
-  if (file != null) {
-    logger.write(
-      message: "Logs are stored at: ${file.path}",
-      level: LogLevel.info,
-    );
+    final content = await logFile.readAsString();
+
+    logger.info("Log file contains ${content.length} characters.");
   }
 
-  print("\n=============== Demo Completed ===============");
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(child: Text('Check your console and log file')),
+      ),
+    ),
+  );
 }
