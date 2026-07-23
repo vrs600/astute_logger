@@ -144,7 +144,7 @@ class AstuteLogger {
         "${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}";
 
     String logText =
-        "[$localTimestamp] [${getAppMode().name.toUpperCase()}] $contextTag$title::$methodLabel -> $scrubbedMessage";
+        "[log] [$localTimestamp] [${getAppMode().name.toUpperCase()}] $contextTag$methodLabel -> $scrubbedMessage";
 
     if (config.enableColorLogging) {
       logText = _colorize(logText, _getColorForLevel(level));
