@@ -107,8 +107,13 @@ class AstuteLogger {
     bool prettyPrint = false,
     required LogLevel level,
     Map<String, dynamic>? extra,
+    String? tag,
   }) {
     if (kReleaseMode) return;
+
+    final tagText =
+        tag != null && tag.trim().isNotEmpty ? '[${tag.toUpperCase()}] ' : '';
+
     if (level.index < config.minimumLogLevel.index) return;
 
     final scrubbedMessage =
@@ -144,7 +149,7 @@ class AstuteLogger {
         "${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}";
 
     String logText =
-        "[log] [$localTimestamp] [${getAppMode().name.toUpperCase()}] $contextTag$methodLabel -> $scrubbedMessage";
+        "[log] [$localTimestamp] [${getAppMode().name.toUpperCase()}] $tagText$contextTag$methodLabel -> $scrubbedMessage";
 
     if (config.enableColorLogging) {
       logText = _colorize(logText, _getColorForLevel(level));
@@ -344,23 +349,55 @@ class AstuteLogger {
   }
 
   /// Logs a debug-level message.
-  void debug(String message, {Map<String, dynamic>? extra}) {
-    write(message: message, level: LogLevel.debug, extra: extra);
+  void debug(
+    String message, {
+    Map<String, dynamic>? extra,
+    String? tag,
+  }) {
+    write(
+      message: message,
+      level: LogLevel.debug,
+      extra: extra,
+      tag: tag,
+    );
   }
 
   /// Logs an info-level message.
-  void info(String message, {Map<String, dynamic>? extra}) {
-    write(message: message, level: LogLevel.info, extra: extra);
+  void info(
+    String message, {
+    Map<String, dynamic>? extra,
+    String? tag,
+  }) {
+    write(
+      message: message,
+      level: LogLevel.info,
+      extra: extra,
+      tag: tag,
+    );
   }
 
   /// Logs a warning-level message.
-  void warning(String message, {Map<String, dynamic>? extra}) {
-    write(message: message, level: LogLevel.warning, extra: extra);
+  void warning(
+    String message, {
+    Map<String, dynamic>? extra,
+    String? tag,
+  }) {
+    write(
+      message: message,
+      level: LogLevel.warning,
+      extra: extra,
+      tag: tag,
+    );
   }
 
   /// Logs an error-level message, optionally including an error and stack trace.
-  void error(String message,
-      {Map<String, dynamic>? extra, Object? error, StackTrace? stackTrace}) {
+  void error(
+    String message, {
+    Map<String, dynamic>? extra,
+    Object? error,
+    StackTrace? stackTrace,
+    String? tag,
+  }) {
     final combinedMessage = StringBuffer(message);
     if (error != null) {
       combinedMessage.write('\nError: $error');
@@ -369,14 +406,21 @@ class AstuteLogger {
       combinedMessage.write('\nStackTrace:\n$stackTrace');
     }
     write(
-        message: combinedMessage.toString(),
-        level: LogLevel.error,
-        extra: extra);
+      message: combinedMessage.toString(),
+      level: LogLevel.error,
+      extra: extra,
+      tag: tag,
+    );
   }
 
   /// Logs a critical-level message, optionally including an error and stack trace.
-  void critical(String message,
-      {Map<String, dynamic>? extra, Object? error, StackTrace? stackTrace}) {
+  void critical(
+    String message, {
+    Map<String, dynamic>? extra,
+    Object? error,
+    StackTrace? stackTrace,
+    String? tag,
+  }) {
     final combinedMessage = StringBuffer(message);
     if (error != null) {
       combinedMessage.write('\nError: $error');
@@ -385,8 +429,10 @@ class AstuteLogger {
       combinedMessage.write('\nStackTrace:\n$stackTrace');
     }
     write(
-        message: combinedMessage.toString(),
-        level: LogLevel.critical,
-        extra: extra);
+      message: combinedMessage.toString(),
+      level: LogLevel.critical,
+      extra: extra,
+      tag: tag,
+    );
   }
 }
