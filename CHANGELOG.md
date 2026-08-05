@@ -1,6 +1,6 @@
 #Changelog
 
-## [2.5.2]
+## [2.5.3]
 - Standardized log output with a consistent `[log]` prefix.
 - Improved log readability by simplifying the title format.
 - Preserved timestamps, context information, colorized logging, and scrubbed message output.
