@@ -101,6 +101,54 @@ class AstuteLogger {
     }
   }
 
+  /// Retrieves log lines that contain the specified tag.
+  ///
+  /// Reads the log file, filters lines containing [tag] in the format [TAG],
+  /// strips ANSI color codes, and returns the matching log lines.
+  ///
+  /// Parameters:
+  ///   - tag: The tag to filter logs by (case-insensitive)
+  ///
+  /// Returns a Future containing a list of matching log lines with ANSI codes removed.
+  static Future<List<String>> getLogsByTag(String tag) async {
+    try {
+      // Get the default log file
+      final logFile = await getLogFile();
+      if (logFile == null || !(await logFile.exists())) {
+        return [];
+      }
+
+      // Read the log file content
+      final content = await logFile.readAsString();
+      if (content.isEmpty) {
+        return [];
+      }
+
+      // Normalize the tag for case-insensitive matching
+      final tagPattern = RegExp(r'\[' + tag.trim().toUpperCase() + r'\]');
+
+      // Split into lines and filter matching lines
+      final matchingLines = content
+          .split('\n')
+          .where((line) => tagPattern.hasMatch(line))
+          .map((line) => _stripAnsiCodes(line))
+          .where((line) => line.trim().isNotEmpty)
+          .toList();
+
+      return matchingLines;
+    } catch (e) {
+      log('Failed to read logs by tag: $e', name: 'LoggerError');
+      return [];
+    }
+  }
+
+  /// Strips ANSI color codes from a string.
+  ///
+  /// Removes all ANSI escape sequences that are used for terminal coloring.
+  static String _stripAnsiCodes(String text) {
+    return text.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
+  }
+
   /// Writes a log message with the specified level and optional metadata.
   void write({
     required String message,
@@ -297,6 +345,66 @@ class AstuteLogger {
   // ------------------------------------------------------------------
   // 🔒 Sensitive Data Redaction Engine
   // ------------------------------------------------------------------
+
+  static final Set<String> _sensitiveKeys = {
+    "password",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "authorization",
+    "apikey",
+    "secret",
+    "email",
+  };
+
+  static void registerSensitiveKey(String key) {
+    _sensitiveKeys.add(key.toLowerCase());
+  }
+
+  static void unregisterSensitiveKey(String key) {
+    _sensitiveKeys.remove(key.toLowerCase());
+  }
+
+  static List<String> getSensitiveKeys() {
+    return _sensitiveKeys.toList()..sort();
+  }
+
+  dynamic _redactObject(dynamic value) {
+    if (value is Map) {
+      return value.map((key, val) {
+        final lowerKey = key.toString().toLowerCase();
+
+        if (_sensitiveKeys.contains(lowerKey)) {
+          return MapEntry(key, "[REDACTED]");
+        }
+
+        return MapEntry(key, _redactObject(val));
+      });
+    }
+
+    if (value is List) {
+      return value.map(_redactObject).toList();
+    }
+
+    return value;
+  }
+
+  void json(
+    Object? object, {
+    LogLevel level = LogLevel.debug,
+    String? tag,
+    Map<String, dynamic>? extra,
+  }) {
+    final cleaned = _redactObject(object);
+
+    write(
+      message: const JsonEncoder.withIndent("  ").convert(cleaned),
+      level: level,
+      prettyPrint: false,
+      extra: extra,
+      tag: tag,
+    );
+  }
 
   static final List<RegExp> _redactionRules = [
     // 1. Bearer / Authorization tokens

@@ -4,6 +4,7 @@
 - Standardized log output with a consistent `[log]` prefix.
 - Improved log readability by simplifying the title format.
 - Preserved timestamps, context information, colorized logging, and scrubbed message output.
+- Updated README.md with `getLogsByTag` feature documentation
 
 ## [2.5.1]
 - updated `README.MD`

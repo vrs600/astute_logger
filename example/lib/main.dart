@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:astute_logger/astute_logger.dart';
+import 'package:astute_logger/service/logging_interceptor.dart';
+import 'package:dio/dio.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,13 +71,37 @@ Credit Card : 4111111111111111
     },
     "permissions": ["read", "write", "delete"],
   });
-
+  
   logger.write(message: json, prettyPrint: true, level: LogLevel.info);
 
   try {
     throw Exception("Something went terribly wrong.");
   } catch (e, stackTrace) {
     logger.error("Caught exception", error: e, stackTrace: stackTrace);
+  }
+
+  // Example: Using the Dio logging interceptor
+  try {
+    final dio = Dio();
+
+    // Add the logging interceptor
+    dio.interceptors.add(
+      LoggingInterceptor(
+        logger: logger,
+        logRequestHeaders: true,
+        logRequestBody: true,
+        logResponseHeaders: true,
+        logResponseBody: true,
+      ),
+    );
+
+    // Make a test HTTP request (this will be logged)
+    logger.info("Making test HTTP request...");
+    await dio.get('https://jsonplaceholder.typicode.com/posts/1');
+
+    logger.info("HTTP request completed successfully!");
+  } catch (e) {
+    logger.error("HTTP request failed", error: e);
   }
 
   final logFile = await AstuteLogger.getLogFile();
@@ -92,7 +118,9 @@ Credit Card : 4111111111111111
     const MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
-        body: Center(child: Text('Check your console and log file')),
+        body: Center(
+          child: Text('Check your console and log file for HTTP logs'),
+        ),
       ),
     ),
   );

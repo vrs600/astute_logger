@@ -219,6 +219,13 @@ if (file != null && await file.exists()) {
 }
 ```
 
+## 🏷️ Filter Logs by Tag
+
+```dart
+final authLogs = await AstuteLogger.getLogsByTag('AUTH');
+authLogs.forEach(print);
+```
+
 ---
 
 ## ⚙️ Configuration
