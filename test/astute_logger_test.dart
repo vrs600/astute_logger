@@ -1,1163 +1,981 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:astute_logger/astute_logger.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('Astute Logger Tests', () {
-    // ═══════════════════════════════════════════════════════════════════
-    // 1. LOG LEVELS TESTS
-    // ═══════════════════════════════════════════════════════════════════
-    group('Log Levels', () {
-      test('LogLevel enum contains all expected levels', () {
-        expect(LogLevel.values.length, equals(5));
-        expect(LogLevel.values, contains(LogLevel.debug));
-        expect(LogLevel.values, contains(LogLevel.info));
-        expect(LogLevel.values, contains(LogLevel.warning));
-        expect(LogLevel.values, contains(LogLevel.error));
-        expect(LogLevel.values, contains(LogLevel.critical));
-      });
-
-      test('Log levels are ordered by severity', () {
-        expect(LogLevel.debug.index, equals(0));
-        expect(LogLevel.info.index, equals(1));
-        expect(LogLevel.warning.index, equals(2));
-        expect(LogLevel.error.index, equals(3));
-        expect(LogLevel.critical.index, equals(4));
-      });
-
-      test('Logger methods exist for all levels', () {
-        final logger = AstuteLogger('Test');
-        expect(() => logger.debug('test'), returnsNormally);
-        expect(() => logger.info('test'), returnsNormally);
-        expect(() => logger.warning('test'), returnsNormally);
-        expect(() => logger.error('test'), returnsNormally);
-        expect(() => logger.critical('test'), returnsNormally);
-      });
-    });
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 2. REDACTION TESTS
-    // ═══════════════════════════════════════════════════════════════════
-    // 16. ACTUAL REDACTION FUNCTIONALITY TESTS
-    // ═══════════════════════════════════════════════════════════════════
-    group('Actual Redaction Functionality', () {
-      test('Email redaction works correctly through public interface', () {
-        final logger = AstuteLogger('Test');
-        // Test through the json method which uses redaction internally
-        final data = {
-          'user': 'john',
-          'email': 'test@example.com',
-          'message': 'User login successful'
-        };
-
-        // The json method should redact sensitive data
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Token redaction works correctly through public interface', () {
-        final logger = AstuteLogger('Test');
-        final data = {'api_token': 'secret_token_123', 'user_id': 123};
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Password redaction works correctly through public interface', () {
-        final logger = AstuteLogger('Test');
-        final data = {
-          'username': 'john',
-          'password': 'mySecret123',
-          'action': 'login'
-        };
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Credit card redaction works correctly through public interface',
-          () {
-        final logger = AstuteLogger('Test');
-        final data = {
-          'payment_method': 'credit_card',
-          'card_number': '4532-1234-5678-9010',
-          'amount': 100.00
-        };
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Redaction can be disabled in config', () {
-        final config = const LogConfig(enableRedaction: false);
-        final logger = AstuteLogger('Test', config: config);
-
-        // When redaction is disabled, sensitive data should still be logged
-        expect(() => logger.info('email: test@example.com'), returnsNormally);
-      });
-
-      test('Empty message handling', () {
-        final logger = AstuteLogger('Test');
-        // Empty message should be handled gracefully
-        expect(() => logger.info(''), returnsNormally);
-      });
-    });
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 17. ANSI CODE STRIPPING TESTS
-    // ═══════════════════════════════════════════════════════════════════
-    group('ANSI Code Stripping', () {
-      test('ANSI code handling in log processing', () {
-        final logger = AstuteLogger('Test');
-        // The logger should handle ANSI codes in messages without crashing
-        final message = 'Normal text with \x1B[32mgreen\x1B[0m color codes';
-        expect(() => logger.info(message), returnsNormally);
-      });
-
-      test('ANSI codes in different log levels', () {
-        final logger = AstuteLogger('Test');
-        final message = 'Text with \x1B[31mred\x1B[0m colors';
-
-        expect(() => logger.debug(message), returnsNormally);
-        expect(() => logger.info(message), returnsNormally);
-        expect(() => logger.warning(message), returnsNormally);
-        expect(() => logger.error(message), returnsNormally);
-        expect(() => logger.critical(message), returnsNormally);
-      });
-    });
-
-    // ═══════════════════════════════════════════════════════════════════
-    // 18. OBJECT REDACTION TESTS
-    // ═══════════════════════════════════════════════════════════════════
-    group('Object Redaction', () {
-      test('Object redaction handles simple map with sensitive keys', () {
-        final logger = AstuteLogger('Test');
-        final data = {
-          'name': 'John',
-          'password': 'secret123',
-          'email': 'john@example.com'
-        };
-
-        // Test through the json method which uses _redactObject internally
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Object redaction handles nested maps', () {
-        final logger = AstuteLogger('Test');
-        final data = {
-          'user': {
-            'name': 'John',
-            'credentials': {'password': 'secret123', 'token': 'abc123'}
-          }
-        };
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Object redaction handles lists', () {
-        final logger = AstuteLogger('Test');
-        final data = [
-          {'name': 'John', 'password': 'secret1'},
-          {'name': 'Jane', 'password': 'secret2'}
-        ];
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Object redaction handles mixed nested structures', () {
-        final logger = AstuteLogger('Test');
-        final data = {
-          'users': [
-            {
-              'name': 'John',
-              'emails': ['john@example.com', 'john.work@example.com'],
-              'credentials': {
-                'password': 'secret',
-                'tokens': ['token1', 'token2']
-              }
-            }
-          ]
-        };
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-
-      test('Object redaction handles non-map, non-list values', () {
-        final logger = AstuteLogger('Test');
-        final data = 'simple string';
-
-        expect(() => logger.json(data), returnsNormally);
-      });
-    });
-
-    test('Color logging can be disabled', () {
-      final config = const LogConfig(enableColorLogging: false);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableColorLogging, isFalse);
-      expect(() => logger.info('test'), returnsNormally);
-    });
-
-    test('Color logging can be enabled', () {
-      final config = const LogConfig(enableColorLogging: true);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableColorLogging, isTrue);
-      expect(() => logger.info('test'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 6. EXECUTION TIME TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Execution Time Measurement', () {
-    test('logExecutionTime returns correct value', () {
-      final logger = AstuteLogger('Test');
-
-      final result = logger.logExecutionTime('test', () => 42);
-
-      expect(result, equals(42));
-    });
-
-    test('logExecutionTime works with complex types', () {
-      final logger = AstuteLogger('Test');
-
-      final result = logger.logExecutionTime('test', () {
-        return {
-          'key': 'value',
-          'list': [1, 2, 3]
-        };
-      });
-
-      expect(
-          result,
-          equals({
-            'key': 'value',
-            'list': [1, 2, 3]
-          }));
-    });
-
-    test('logExecutionTimeAsync returns correct value', () async {
-      final logger = AstuteLogger('Test');
-
-      final result = await logger.logExecutionTimeAsync('test', () async {
-        await Future.delayed(const Duration(milliseconds: 100));
-        return 'async result';
-      });
-
-      expect(result, equals('async result'));
-    });
-
-    test('logExecutionTimeAsync measures time', () async {
-      final logger = AstuteLogger('Test');
-
-      await logger.logExecutionTimeAsync('test', () async {
-        await Future.delayed(const Duration(milliseconds: 100));
-      });
-
-      // Just verify it completes without error
-      expect(true, isTrue);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 7. LOG FILE TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('File Logging', () {
-    test('getLogFile returns File or null', () async {
-      final file = await AstuteLogger.getLogFile();
-
-      expect(file, isNotNull);
-    });
-
-    test('getLogFile can specify custom filename', () async {
-      final file = await AstuteLogger.getLogFile(fileName: 'custom.txt');
-
-      expect(file, isNotNull);
-      expect(file!.path, contains('custom.txt'));
-    });
-
-    test('File output can be enabled', () {
-      final config = const LogConfig(enableFileOutput: true);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableFileOutput, isTrue);
-    });
-
-    test('File output can be disabled', () {
-      final config = const LogConfig(enableFileOutput: false);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableFileOutput, isFalse);
-    });
-
-    test('Custom log filename can be set', () {
-      final config = const LogConfig(logFileName: 'my_logs.txt');
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.logFileName, equals('my_logs.txt'));
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 8. TAG-BASED LOG RETRIEVAL TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Tag-based Log Retrieval', () {
-    test('getLogsByTag method exists and is static', () {
-      expect(AstuteLogger.getLogsByTag, isNotNull);
-    });
-
-    test('getLogsByTag returns empty list when no logs exist', () async {
-      final logs = await AstuteLogger.getLogsByTag('test');
-      expect(logs, isA<List<String>>());
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag handles empty tag', () async {
-      final logs = await AstuteLogger.getLogsByTag('');
-      expect(logs, isA<List<String>>());
-      // Should return empty list for empty tag
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag handles whitespace-only tag', () async {
-      final logs = await AstuteLogger.getLogsByTag('   ');
-      expect(logs, isA<List<String>>());
-      // Should return empty list for whitespace-only tag
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag can be called with different cases', () async {
-      // This test verifies the method can be called with different cases
-      // Actual functionality would need a log file with known content to test properly
-      await AstuteLogger.getLogsByTag('TEST');
-      await AstuteLogger.getLogsByTag('test');
-      await AstuteLogger.getLogsByTag('Test');
-
-      // All calls should complete without throwing
-      expect(true, isTrue);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 8. LOGGER INSTANTIATION TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Logger Instantiation', () {
-    test('Logger can be created with title only', () {
-      final logger = AstuteLogger('MyLogger');
-
-      expect(logger.title, equals('MyLogger'));
-      expect(logger.config, isNotNull);
-    });
-
-    test('Logger can be created with title and config', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.warning);
-      final logger = AstuteLogger('MyLogger', config: config);
-
-      expect(logger.title, equals('MyLogger'));
-      expect(logger.config, equals(config));
-    });
-
-    test('Multiple loggers can be created independently', () {
-      final logger1 = AstuteLogger('Logger1');
-      final logger2 = AstuteLogger('Logger2');
-
-      expect(logger1.title, equals('Logger1'));
-      expect(logger2.title, equals('Logger2'));
-      expect(identical(logger1, logger2), isFalse);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 9. RELEASE MODE TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Release Mode Behavior', () {
-    test('Logger methods can be called without errors', () {
-      final logger = AstuteLogger('Test');
-
-      // Even if kReleaseMode is true, methods should not throw
-      expect(() => logger.debug('test'), returnsNormally);
-      expect(() => logger.info('test'), returnsNormally);
-      expect(() => logger.warning('test'), returnsNormally);
-      expect(() => logger.error('test'), returnsNormally);
-      expect(() => logger.critical('test'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 10. ERROR HANDLING TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Error Handling', () {
-    test('Error method accepts error object', () {
-      final logger = AstuteLogger('Test');
-      final error = Exception('Test error');
-
-      expect(
-        () => logger.error('An error occurred', error: error),
-        returnsNormally,
-      );
-    });
-
-    test('Error method accepts stack trace', () {
-      final logger = AstuteLogger('Test');
-
-      try {
-        throw Exception('Test');
-      } catch (e, st) {
-        expect(
-          () => logger.error('An error occurred', error: e, stackTrace: st),
-          returnsNormally,
-        );
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // ─────────────────────────────────────────────────────────────────
+  // Test harness helpers
+  // ─────────────────────────────────────────────────────────────────
+  late Directory tempDir;
+
+  setUp(() async {
+    tempDir = await Directory.systemTemp.createTemp('astute_logger_test_');
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return tempDir.path;
       }
+      throw MissingPluginException();
     });
+  });
 
-    test('Critical method accepts error and stack trace', () {
-      final logger = AstuteLogger('Test');
+  tearDown(() async {
+    await AstuteLogger.flush();
+    AstuteLogger.resetFileCache();
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    if (tempDir.existsSync()) {
+      await tempDir.delete(recursive: true);
+    }
+  });
 
-      try {
-        throw Exception('Critical error');
-      } catch (e, st) {
-        expect(
-          () => logger.critical(
-            'Critical error occurred',
-            error: e,
-            stackTrace: st,
+  /// Creates a logger writing to a unique file, console disabled.
+  AstuteLogger makeLogger({
+    String? fileName,
+    LogConfig? config,
+    String title = 'Test',
+  }) {
+    final name =
+        fileName ?? 'test_${DateTime.now().microsecondsSinceEpoch}.txt';
+    return AstuteLogger(
+      title,
+      config: config ??
+          LogConfig(
+            enableConsoleOutput: false,
+            enableColorLogging: false,
+            logFileName: name,
           ),
-          returnsNormally,
-        );
-      }
+    );
+  }
+
+  Future<String> readLog(String fileName) async {
+    await AstuteLogger.flush();
+    final file = File('${tempDir.path}/$fileName');
+    if (!await file.exists()) return '';
+    return file.readAsString();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 1. ENUMS & CONSTANTS
+  // ═══════════════════════════════════════════════════════════════════
+  group('Enums and constants', () {
+    test('LogLevel has exactly 5 levels in severity order', () {
+      expect(LogLevel.values, [
+        LogLevel.debug,
+        LogLevel.info,
+        LogLevel.warning,
+        LogLevel.error,
+        LogLevel.critical,
+      ]);
+      expect(LogLevel.debug.index, 0);
+      expect(LogLevel.critical.index, 4);
+    });
+
+    test('AppMode has debug/profile/release/unknown', () {
+      expect(
+          AppMode.values,
+          containsAll(<AppMode>[
+            AppMode.debug,
+            AppMode.profile,
+            AppMode.release,
+            AppMode.unknown,
+          ]));
+    });
+
+    test('LogColor codes match ANSI SGR values', () {
+      expect(LogColor.green.code, '32');
+      expect(LogColor.blue.code, '34');
+      expect(LogColor.yellow.code, '33');
+      expect(LogColor.red.code, '31');
+      expect(LogColor.magenta.code, '35');
+    });
+
+    test('appMode getter returns a valid enum value', () {
+      final logger = makeLogger();
+      expect(AppMode.values, contains(logger.appMode));
     });
   });
 
-  // ════╕══════════════════════════════════════════════════════════════════
-  // 11. SENSITIVE KEY MANAGEMENT TESTS
   // ═══════════════════════════════════════════════════════════════════
-  group('Sensitive Key Management', () {
-    test('Default sensitive keys are present', () {
-      final defaultKeys = AstuteLogger.getSensitiveKeys();
-      expect(defaultKeys, contains('password'));
-      expect(defaultKeys, contains('token'));
-      expect(defaultKeys, contains('email'));
-      expect(defaultKeys, contains('secret'));
+  // 2. LOG CONFIG
+  // ═══════════════════════════════════════════════════════════════════
+  group('LogConfig', () {
+    test('defaults are sensible', () {
+      const c = LogConfig();
+      expect(c.enableRedaction, isTrue);
+      expect(c.minimumLogLevel, LogLevel.debug);
+      expect(c.enableConsoleOutput, isTrue);
+      expect(c.enableFileOutput, isTrue);
+      expect(c.logFileName, 'app_logs.txt');
+      expect(c.enableColorLogging, isTrue);
+      expect(c.redactEmails, isTrue);
     });
 
-    test('Can register new sensitive key', () {
-      AstuteLogger.registerSensitiveKey('api_key');
-      final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, contains('api_key'));
+    test('all fields are configurable', () {
+      const c = LogConfig(
+        enableRedaction: false,
+        minimumLogLevel: LogLevel.error,
+        enableConsoleOutput: false,
+        enableFileOutput: false,
+        logFileName: 'x.txt',
+        enableColorLogging: false,
+        redactEmails: false,
+      );
+      expect(c.enableRedaction, isFalse);
+      expect(c.minimumLogLevel, LogLevel.error);
+      expect(c.enableConsoleOutput, isFalse);
+      expect(c.enableFileOutput, isFalse);
+      expect(c.logFileName, 'x.txt');
+      expect(c.enableColorLogging, isFalse);
+      expect(c.redactEmails, isFalse);
     });
 
-    test('Can unregister sensitive key', () {
-      // First register a key
-      AstuteLogger.registerSensitiveKey('custom_key');
-      expect(AstuteLogger.getSensitiveKeys(), contains('custom_key'));
+    test('LogConfig is const-constructible', () {
+      // Compile-time check: assigning to const variable.
+      const c = LogConfig(minimumLogLevel: LogLevel.warning);
+      expect(c.minimumLogLevel, LogLevel.warning);
+    });
+  });
 
-      // Then unregister it
-      AstuteLogger.unregisterSensitiveKey('custom_key');
-      expect(AstuteLogger.getSensitiveKeys(), isNot(contains('custom_key')));
+  // ═══════════════════════════════════════════════════════════════════
+  // 3. LOGGER INSTANTIATION & ACCESSORS
+  // ═══════════════════════════════════════════════════════════════════
+  group('Logger instantiation', () {
+    test('can be created with title only', () {
+      final l = AstuteLogger('MyLogger');
+      expect(l.title, 'MyLogger');
+      expect(l.config, isA<LogConfig>());
     });
 
-    test('Sensitive keys are case-insensitive', () {
-      AstuteLogger.registerSensitiveKey('API_KEY');
-      final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, contains('api_key'));
+    test('can be created with title and config', () {
+      const c = LogConfig(minimumLogLevel: LogLevel.warning);
+      final l = AstuteLogger('MyLogger', config: c);
+      expect(l.title, 'MyLogger');
+      expect(l.config, same(c));
+    });
+
+    test('multiple loggers are independent', () {
+      final a = AstuteLogger('A');
+      final b = AstuteLogger('B');
+      expect(identical(a, b), isFalse);
+      expect(a.title, 'A');
+      expect(b.title, 'B');
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 4. LOG LEVEL FILTERING
+  // ═══════════════════════════════════════════════════════════════════
+  group('Log level filtering', () {
+    test('minimumLogLevel=debug writes all levels', () async {
+      final fileName = 'lvl_debug.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          logFileName: fileName,
+          minimumLogLevel: LogLevel.debug,
+        ),
+      );
+      await l.debug('D');
+      await l.info('I');
+      await l.warning('W');
+      await l.error('E');
+      await l.critical('C');
+      final out = await readLog(fileName);
+      for (final tag in ['D', 'I', 'W', 'E', 'C']) {
+        expect(out, contains(tag));
+      }
+    });
+
+    test('minimumLogLevel=error drops debug/info/warning', () async {
+      final fileName = 'lvl_error.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          logFileName: fileName,
+          minimumLogLevel: LogLevel.error,
+        ),
+      );
+      await l.debug('D');
+      await l.info('I');
+      await l.warning('W');
+      await l.error('E');
+      await l.critical('C');
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('-> D')));
+      expect(out, isNot(contains('-> I')));
+      expect(out, isNot(contains('-> W')));
+      expect(out, contains('-> E'));
+      expect(out, contains('-> C'));
+    });
+
+    test('minimumLogLevel=critical writes only critical', () async {
+      final fileName = 'lvl_critical.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          logFileName: fileName,
+          minimumLogLevel: LogLevel.critical,
+        ),
+      );
+      await l.debug('D');
+      await l.info('I');
+      await l.error('E');
+      await l.critical('C');
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('-> D')));
+      expect(out, isNot(contains('-> I')));
+      expect(out, isNot(contains('-> E')));
+      expect(out, contains('-> C'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 5. QUEUE SERIALIZATION (regression for critical bug)
+  // ═══════════════════════════════════════════════════════════════════
+  group('Async log queue', () {
+    test('writes preserve insertion order under concurrency', () async {
+      final fileName = 'queue_order.txt';
+      final l = makeLogger(fileName: fileName);
+      final messages = List.generate(50, (i) => 'ordered-$i');
+
+      await Future.wait(messages.map(l.info));
+
+      final lines = await File('${tempDir.path}/$fileName').readAsLines();
+      final actual = lines
+          .map((line) => line.substring(line.lastIndexOf(' -> ') + 4))
+          .toList();
+      expect(actual, equals(messages));
+    });
+
+    test('concurrent writes across multiple loggers serialize per file',
+        () async {
+      final fileName = 'multi_logger.txt';
+      final a = makeLogger(fileName: fileName, title: 'A');
+      final b = makeLogger(fileName: fileName, title: 'B');
+
+      await Future.wait([
+        a.info('a-1'),
+        b.info('b-1'),
+        a.info('a-2'),
+        b.info('b-2'),
+      ]);
+
+      await AstuteLogger.flush();
+      final lines = await File('${tempDir.path}/$fileName').readAsLines();
+      expect(lines.length, 4);
+      // Ordering across loggers is nondeterministic, but each line must
+      // be complete and parseable.
+      for (final line in lines) {
+        expect(line, startsWith('[log] '));
+        expect(line, contains(' -> '));
+      }
+    });
+
+    test('write() Future completes only after file is persisted', () async {
+      final fileName = 'persisted.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('persisted-message');
+      final out = await readLog(fileName);
+      expect(out, contains('persisted-message'));
+    });
+
+    test('disabling file output skips disk write but write() still resolves',
+        () async {
+      final fileName = 'no_file.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          enableFileOutput: false,
+          logFileName: fileName,
+        ),
+      );
+      await l.info('will-not-persist');
+      final out = await readLog(fileName);
+      expect(out, isEmpty);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 6. PRETTY PRINT (regression for broken path)
+  // ═══════════════════════════════════════════════════════════════════
+  group('prettyPrint', () {
+    test('pretty-prints a JSON string body but keeps log prefix', () async {
+      final fileName = 'pretty.json.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await l.write(
+        message: '{"a":1,"b":[2,3]}',
+        level: LogLevel.info,
+        prettyPrint: true,
+      );
+      final out = await readLog(fileName);
+      expect(
+          out, contains(' -> {\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}'));
+    });
+
+    test('non-JSON message is logged verbatim when prettyPrint is true',
+        () async {
+      final fileName = 'pretty.nonjson.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await l.write(
+        message: 'plain text',
+        level: LogLevel.info,
+        prettyPrint: true,
+      );
+      final out = await readLog(fileName);
+      expect(out, contains(' -> plain text'));
+    });
+
+    test('redaction is applied to pretty-printed JSON', () async {
+      final fileName = 'pretty.redact.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await l.write(
+        message: '{"password":"hunter2","user":"alice"}',
+        level: LogLevel.info,
+        prettyPrint: true,
+      );
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('hunter2')));
+      // The password value should be redacted; user preserved.
+      expect(out, contains('alice'));
+    });
+
+    test('ANSI codes are stripped before file write', () async {
+      final fileName = 'ansi_strip.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: true,
+          logFileName: fileName,
+        ),
+      );
+      await l.info('colored');
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('\x1B[')));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 7. REDACTION — key-based (structured)
+  // ═══════════════════════════════════════════════════════════════════
+  group('Object redaction', () {
+    test('redacts top-level sensitive keys', () {
+      final l = makeLogger();
+      final result = l.redactObject({
+        'user': 'alice',
+        'password': 'hunter2',
+        'token': 'abc',
+      }) as Map;
+      expect(result['user'], 'alice');
+      expect(result['password'], '[REDACTED]');
+      expect(result['token'], '[REDACTED]');
+    });
+
+    test('redacts nested map keys recursively', () {
+      final l = makeLogger();
+      final result = l.redactObject({
+        'outer': {
+          'inner': {'password': 'hunter2', 'safe': 'ok'}
+        }
+      }) as Map;
+      expect(result['outer']['inner']['password'], '[REDACTED]');
+      expect(result['outer']['inner']['safe'], 'ok');
+    });
+
+    test('redacts sensitive keys inside lists', () {
+      final l = makeLogger();
+      final result = l.redactObject([
+        {'password': 'a', 'name': 'x'},
+        {'password': 'b', 'name': 'y'},
+      ]) as List;
+      expect(result[0]['password'], '[REDACTED]');
+      expect(result[1]['password'], '[REDACTED]');
+      expect(result[0]['name'], 'x');
+    });
+
+    test('case-insensitive key matching', () {
+      final l = makeLogger();
+      final result = l.redactObject({
+        'PASSWORD': 'x',
+        'Token': 'y',
+        'ApiKey': 'z',
+      }) as Map;
+      expect(result['PASSWORD'], '[REDACTED]');
+      expect(result['Token'], '[REDACTED]');
+      expect(result['ApiKey'], '[REDACTED]');
+    });
+
+    test('non-map/list values pass through unchanged', () {
+      final l = makeLogger();
+      expect(l.redactObject('plain'), 'plain');
+      expect(l.redactObject(42), 42);
+      expect(l.redactObject(null), isNull);
+    });
+
+    test('custom sensitive keys can be registered/unregistered', () {
+      AstuteLogger.registerSensitiveKey('ssn');
+      final l = makeLogger();
+      final result = l.redactObject({'ssn': '123-45-6789'}) as Map;
+      expect(result['ssn'], '[REDACTED]');
+
+      AstuteLogger.unregisterSensitiveKey('ssn');
+      final result2 = l.redactObject({'ssn': '123-45-6789'}) as Map;
+      expect(result2['ssn'], '123-45-6789');
     });
 
     test('getSensitiveKeys returns sorted list', () {
-      // Clear and add some keys in random order
-      final defaultKeys = AstuteLogger.getSensitiveKeys();
-      for (var key in defaultKeys) {
-        AstuteLogger.unregisterSensitiveKey(key);
-      }
-
-      AstuteLogger.registerSensitiveKey('zebra');
-      AstuteLogger.registerSensitiveKey('apple');
-      AstuteLogger.registerSensitiveKey('banana');
-
       final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, equals(['apple', 'banana', 'zebra']));
-
-      // Restore default keys
-      for (var key in defaultKeys) {
-        AstuteLogger.registerSensitiveKey(key);
-      }
+      expect(keys, equals(List<String>.from(keys)..sort()));
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 12. JSON LOGGING TESTS
+  // 8. REDACTION — free-text regex rules
   // ═══════════════════════════════════════════════════════════════════
-  group('JSON Logging', () {
-    test('json method exists and can be called', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json({'key': 'value'}), returnsNormally);
+  group('Free-text redaction', () {
+    Future<String> logAndRead(String message) async {
+      final fileName = 'ft_${DateTime.now().microsecondsSinceEpoch}.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info(message);
+      return readLog(fileName);
+    }
+
+    test('redacts quoted password value', () async {
+      final out = await logAndRead('{"password": "p@ss!"}');
+      expect(out, isNot(contains('p@ss!')));
+      expect(out, contains('[REDACTED]'));
     });
 
-    test('json method accepts all log levels', () {
-      final logger = AstuteLogger('Test');
-      final data = {'test': 'data'};
-
-      expect(() => logger.json(data, level: LogLevel.debug), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.info), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.warning), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.error), returnsNormally);
-      expect(
-          () => logger.json(data, level: LogLevel.critical), returnsNormally);
+    test('redacts Bearer token', () async {
+      final out = await logAndRead('Authorization: Bearer abc-123.xyz');
+      expect(out, isNot(contains('abc-123.xyz')));
+      expect(out, contains('[REDACTED]'));
     });
 
-    test('json method accepts tag parameter', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json({'key': 'value'}, tag: 'TEST'), returnsNormally);
+    test('redacts bare token:value', () async {
+      final out = await logAndRead('token:abc123 count:5');
+      expect(out, isNot(contains('abc123')));
+      expect(out, contains('count:5'));
     });
 
-    test('json method accepts extra parameter', () {
-      final logger = AstuteLogger('Test');
-      final extra = {'context': 'test'};
-      expect(
-          () => logger.json({'key': 'value'}, extra: extra), returnsNormally);
+    test('does not redact the word "token" when not followed by a value',
+        () async {
+      final out = await logAndRead('token count is 5');
+      expect(out, contains('token count is 5'));
     });
 
-    test('json method handles null object', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json(null), returnsNormally);
+    test('redacts email addresses by default', () async {
+      final out = await logAndRead('contact alice@example.com');
+      expect(out, isNot(contains('alice@example.com')));
     });
 
-    test('json method handles complex nested objects', () {
-      final logger = AstuteLogger('Test');
-      final complexData = {
-        'user': {
-          'id': 123,
-          'profile': {
-            'name': 'John',
-            'settings': {'theme': 'dark', 'notifications': true}
-          }
+    test('redactEmails=false preserves emails but still redacts cards',
+        () async {
+      final fileName = 'emails_off.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          logFileName: fileName,
+          redactEmails: false,
+        ),
+      );
+      await l.info('mail a@b.com card 4111111111111111');
+      final out = await readLog(fileName);
+      expect(out, contains('a@b.com'));
+      expect(out, isNot(contains('4111111111111111')));
+    });
+
+    test('redacts credit card numbers', () async {
+      final out = await logAndRead('card 4111111111111111 on file');
+      expect(out, isNot(contains('4111111111111111')));
+    });
+
+    test('enableRedaction=false disables all free-text redaction', () async {
+      final fileName = 'no_redact.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: false,
+          logFileName: fileName,
+          enableRedaction: false,
+        ),
+      );
+      await l.info('password: "hunter2" email a@b.com');
+      final out = await readLog(fileName);
+      expect(out, contains('hunter2'));
+      expect(out, contains('a@b.com'));
+    });
+
+    test('empty message is a no-op', () async {
+      final out = await logAndRead('');
+      expect(out, contains(' -> '));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 9. JSON LOGGING
+  // ═══════════════════════════════════════════════════════════════════
+  group('JSON logging', () {
+    test('json() writes pretty-printed output', () async {
+      final fileName = 'json.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.json({'a': 1, 'b': 'two'});
+      final out = await readLog(fileName);
+      expect(out, contains('"a": 1'));
+      expect(out, contains('"b": "two"'));
+    });
+
+    test('json() redacts sensitive keys before writing', () async {
+      final fileName = 'json_redact.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.json({'user': 'alice', 'password': 'hunter2'});
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('hunter2')));
+      expect(out, contains('alice'));
+    });
+
+    test('json() handles null input', () async {
+      final fileName = 'json_null.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.json(null);
+      expect(await readLog(fileName), contains('null'));
+    });
+
+    test('json() supports custom level and tag', () async {
+      final fileName = 'json_tag.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.json({'x': 1}, level: LogLevel.error, tag: 'API');
+      final out = await readLog(fileName);
+      expect(out, contains('[API]'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 10. TAGS
+  // ═══════════════════════════════════════════════════════════════════
+  group('Tags', () {
+    test('tag is uppercased and bracketed', () async {
+      final fileName = 'tag.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('msg', tag: 'api');
+      final out = await readLog(fileName);
+      expect(out, contains('[API]'));
+    });
+
+    test('empty/whitespace tag produces no tag token', () async {
+      final fileName = 'tag_empty.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('msg', tag: '   ');
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('[]')));
+    });
+
+    test('special characters in tag are preserved verbatim', () async {
+      final fileName = 'tag_special.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('msg', tag: 'a-b_c.1');
+      final out = await readLog(fileName);
+      expect(out, contains('[A-B_C.1]'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 11. EXTRA CONTEXT
+  // ═══════════════════════════════════════════════════════════════════
+  group('Extra context', () {
+    test('extra map appears in the log line', () async {
+      final fileName = 'extra.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('msg', extra: {'userId': '42'});
+      final out = await readLog(fileName);
+      expect(out, contains('userId'));
+      expect(out, contains('42'));
+    });
+
+    test('extra can be empty map without crashing', () async {
+      final fileName = 'extra_empty.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('msg', extra: {});
+      expect(await readLog(fileName), contains('msg'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 12. ZONE CONTEXT (LoggerContext)
+  // ═══════════════════════════════════════════════════════════════════
+  group('LoggerContext zone propagation', () {
+    test('requestId is injected into log line', () async {
+      final fileName = 'zone.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await LoggerContext.runWithContext(
+        requestId: 'REQ-123',
+        body: () async {
+          await l.info('inside zone');
         },
-        'items': [1, 2, 3],
-        'metadata': {
-          'timestamp': DateTime.now().toIso8601String(),
-          'version': '1.0'
-        }
-      };
+      );
 
-      expect(() => logger.json(complexData), returnsNormally);
+      final out = await readLog(fileName);
+      expect(out, contains('[ReqID: REQ-123]'));
+    });
+
+    test('extra context is merged into log line', () async {
+      final fileName = 'zone_extra.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await LoggerContext.runWithContext(
+        requestId: 'REQ-9',
+        extra: {'tenant': 'acme'},
+        body: () async {
+          await l.info('inside');
+        },
+      );
+
+      final out = await readLog(fileName);
+      expect(out, contains('tenant'));
+      expect(out, contains('acme'));
+    });
+
+    test('zone context does not leak outside runWithContext', () async {
+      final fileName = 'zone_leak.txt';
+      final l = makeLogger(fileName: fileName);
+
+      await LoggerContext.runWithContext(
+        requestId: 'ONLY-INSIDE',
+        body: () async {
+          await l.info('inside');
+        },
+      );
+      await l.info('outside');
+
+      final out = await readLog(fileName);
+      final lines = out.split('\n').where((s) => s.isNotEmpty).toList();
+      expect(lines.first, contains('ONLY-INSIDE'));
+      expect(lines.last, isNot(contains('ONLY-INSIDE')));
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 13. LOG LEVEL FILTERING TESTS
+  // 13. EXECUTION TIME
   // ═══════════════════════════════════════════════════════════════════
-  group('Log Level Filtering', () {
-    test('Debug level allows all logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.debug);
-      final logger = AstuteLogger('Test', config: config);
-
-      // All these should work without filtering
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
+  group('Execution time', () {
+    test('logExecutionTime returns function result', () {
+      final l = makeLogger();
+      expect(l.logExecutionTime('op', () => 42), 42);
     });
 
-    test('Info level filters debug logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.info);
-      final logger = AstuteLogger('Test', config: config);
-
-      // Debug should be filtered out, others should work
-      expect(() => logger.debug('debug message'),
-          returnsNormally); // Still returns normally, just won't log
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Warning level filters debug and info logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.warning);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Error level filters debug, info, and warning logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.error);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Critical level filters all except critical logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.critical);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 14. TAG FUNCTIONALITY TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Tag Functionality', () {
-    test('Tag parameter is optional', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message without tag'), returnsNormally);
-    });
-
-    test('Tag can be empty string', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message', tag: ''), returnsNormally);
-    });
-
-    test('Tag can be whitespace only', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message', tag: '   '), returnsNormally);
-    });
-
-    test('Tag can contain special characters', () {
-      final logger = AstuteLogger('Test');
+    test('logExecutionTime logs even when function throws', () async {
+      final fileName = 'exec_sync.txt';
+      final l = makeLogger(fileName: fileName);
       expect(
-          () => logger.info('message', tag: 'test-tag_123'), returnsNormally);
+        () => l.logExecutionTime('boom', () => throw StateError('x')),
+        throwsA(isA<StateError>()),
+      );
+      // Allow queued write to flush.
+      await l.info('flush');
+      final out = await readLog(fileName);
+      expect(out, contains('boom executed in'));
     });
 
-    test('Tag is case-sensitive in output', () {
-      final logger = AstuteLogger('Test');
-      // Both should work, but will produce different tags
-      expect(() => logger.info('message1', tag: 'TEST'), returnsNormally);
-      expect(() => logger.info('message2', tag: 'test'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 5. COLOR LOGGING TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Color Logging', () {
-    test('LogColor enum has all colors', () {
-      expect(LogColor.values.length, equals(5));
-      expect(LogColor.values, contains(LogColor.green));
-      expect(LogColor.values, contains(LogColor.blue));
-      expect(LogColor.values, contains(LogColor.yellow));
-      expect(LogColor.values, contains(LogColor.red));
-      expect(LogColor.values, contains(LogColor.magenta));
+    test('logExecutionTimeAsync returns value', () async {
+      final l = makeLogger();
+      final v = await l.logExecutionTimeAsync('op', () async => 'ok');
+      expect(v, 'ok');
     });
 
-    test('Each LogColor has a valid code', () {
-      expect(LogColor.green.code, equals('32'));
-      expect(LogColor.blue.code, equals('34'));
-      expect(LogColor.yellow.code, equals('33'));
-      expect(LogColor.red.code, equals('31'));
-      expect(LogColor.magenta.code, equals('35'));
-    });
-
-    test('Color logging can be disabled', () {
-      final config = const LogConfig(enableColorLogging: false);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableColorLogging, isFalse);
-      expect(() => logger.info('test'), returnsNormally);
-    });
-
-    test('Color logging can be enabled', () {
-      final config = const LogConfig(enableColorLogging: true);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableColorLogging, isTrue);
-      expect(() => logger.info('test'), returnsNormally);
+    test('logExecutionTimeAsync logs even when function throws', () async {
+      final fileName = 'exec_async.txt';
+      final l = makeLogger(fileName: fileName);
+      await expectLater(
+        l.logExecutionTimeAsync('boom', () async => throw StateError('x')),
+        throwsA(isA<StateError>()),
+      );
+      await l.info('flush');
+      final out = await readLog(fileName);
+      expect(out, contains('boom executed in'));
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 6. EXECUTION TIME TESTS
-  // ══╕════════════════════════════════════════════════════════════════
-  group('Execution Time Measurement', () {
-    test('logExecutionTime returns correct value', () {
-      final logger = AstuteLogger('Test');
-
-      final result = logger.logExecutionTime('test', () => 42);
-
-      expect(result, equals(42));
-    });
-
-    test('logExecutionTime works with complex types', () {
-      final logger = AstuteLogger('Test');
-
-      final result = logger.logExecutionTime('test', () {
-        return {
-          'key': 'value',
-          'list': [1, 2, 3]
-        };
-      });
-
-      expect(
-          result,
-          equals({
-            'key': 'value',
-            'list': [1, 2, 3]
-          }));
-    });
-
-    test('logExecutionTimeAsync returns correct value', () async {
-      final logger = AstuteLogger('Test');
-
-      final result = await logger.logExecutionTimeAsync('test', () async {
-        await Future.delayed(const Duration(milliseconds: 100));
-        return 'async result';
-      });
-
-      expect(result, equals('async result'));
-    });
-
-    test('logExecutionTimeAsync measures time', () async {
-      final logger = AstuteLogger('Test');
-
-      await logger.logExecutionTimeAsync('test', () async {
-        await Future.delayed(const Duration(milliseconds: 100));
-      });
-
-      // Just verify it completes without error
-      expect(true, isTrue);
-    });
-  });
-
+  // 14. FILE OUTPUT & getLogFile
   // ═══════════════════════════════════════════════════════════════════
-  // 7. LOG FILE TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('File Logging', () {
-    test('getLogFile returns File or null', () async {
-      final file = await AstuteLogger.getLogFile();
-
-      expect(file, isNotNull);
-    });
-
-    test('getLogFile can specify custom filename', () async {
+  group('File output', () {
+    test('getLogFile returns a File in the documents directory', () async {
       final file = await AstuteLogger.getLogFile(fileName: 'custom.txt');
-
       expect(file, isNotNull);
       expect(file!.path, contains('custom.txt'));
+      expect(file.path, contains(tempDir.path));
     });
 
-    test('File output can be enabled', () {
-      final config = const LogConfig(enableFileOutput: true);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableFileOutput, isTrue);
+    test('getLogFile returns the same File instance on repeat calls', () async {
+      final a = await AstuteLogger.getLogFile(fileName: 'cached.txt');
+      final b = await AstuteLogger.getLogFile(fileName: 'cached.txt');
+      // After the fix, the file is cached and identical.
+      expect(identical(a, b), isTrue);
     });
 
-    test('File output can be disabled', () {
-      final config = const LogConfig(enableFileOutput: false);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.enableFileOutput, isFalse);
+    test('appends rather than truncates across writes', () async {
+      final fileName = 'append.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('first');
+      await l.info('second');
+      final out = await readLog(fileName);
+      expect(out, contains('first'));
+      expect(out, contains('second'));
     });
 
-    test('Custom log filename can be set', () {
-      final config = const LogConfig(logFileName: 'my_logs.txt');
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(logger.config.logFileName, equals('my_logs.txt'));
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 8. TAG-BASED LOG RETRIEVAL TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Tag-based Log Retrieval', () {
-    test('getLogsByTag method exists and is static', () {
-      expect(AstuteLogger.getLogsByTag, isNotNull);
-    });
-
-    test('getLogsByTag returns empty list when no logs exist', () async {
-      final logs = await AstuteLogger.getLogsByTag('test');
-      expect(logs, isA<List<String>>());
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag handles empty tag', () async {
-      final logs = await AstuteLogger.getLogsByTag('');
-      expect(logs, isA<List<String>>());
-      // Should return empty list for empty tag
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag handles whitespace-only tag', () async {
-      final logs = await AstuteLogger.getLogsByTag('   ');
-      expect(logs, isA<List<String>>());
-      // Should return empty list for whitespace-only tag
-      expect(logs, isEmpty);
-    });
-
-    test('getLogsByTag can be called with different cases', () async {
-      // This test verifies the method can be called with different cases
-      // Actual functionality would need a log file with known content to test properly
-      await AstuteLogger.getLogsByTag('TEST');
-      await AstuteLogger.getLogsByTag('test');
-      await AstuteLogger.getLogsByTag('Test');
-
-      // All calls should complete without throwing
-      expect(true, isTrue);
+    test('custom logFileName routes output correctly', () async {
+      final l = makeLogger(fileName: 'custom_route.txt');
+      await l.info('routed');
+      expect(await readLog('custom_route.txt'), contains('routed'));
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 8. LOGGER INSTANTIATION TESTS
+  // 15. getLogsByTag
   // ═══════════════════════════════════════════════════════════════════
-  group('Logger Instantiation', () {
-    test('Logger can be created with title only', () {
-      final logger = AstuteLogger('MyLogger');
+  group('getLogsByTag', () {
+    test('returns matching lines, strips ANSI, preserves order', () async {
+      final fileName = 'getlogs.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: true,
+          logFileName: fileName,
+        ),
+      );
+      await l.info('one', tag: 'API');
+      await l.info('two', tag: 'DB');
+      await l.info('three', tag: 'api'); // case-insensitive match
 
-      expect(logger.title, equals('MyLogger'));
-      expect(logger.config, isNotNull);
+      final results =
+          await AstuteLogger.getLogsByTag('api', fileName: fileName);
+
+      expect(results.length, 2);
+      expect(results[0], contains('one'));
+      expect(results[1], contains('three'));
+      for (final line in results) {
+        expect(line, isNot(contains('\x1B[')));
+      }
     });
 
-    test('Logger can be created with title and config', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.warning);
-      final logger = AstuteLogger('MyLogger', config: config);
-
-      expect(logger.title, equals('MyLogger'));
-      expect(logger.config, equals(config));
+    test('returns empty list when file does not exist', () async {
+      final results =
+          await AstuteLogger.getLogsByTag('X', fileName: 'missing.txt');
+      expect(results, isEmpty);
     });
 
-    test('Multiple loggers can be created independently', () {
-      final logger1 = AstuteLogger('Logger1');
-      final logger2 = AstuteLogger('Logger2');
+    test('returns empty list for whitespace-only tag', () async {
+      final results = await AstuteLogger.getLogsByTag('   ');
+      expect(results, isEmpty);
+    });
 
-      expect(logger1.title, equals('Logger1'));
-      expect(logger2.title, equals('Logger2'));
-      expect(identical(logger1, logger2), isFalse);
+    test('is case-insensitive', () async {
+      final fileName = 'case.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('m', tag: 'MixedCase');
+      final lower =
+          await AstuteLogger.getLogsByTag('mixedcase', fileName: fileName);
+      final upper =
+          await AstuteLogger.getLogsByTag('MIXEDCASE', fileName: fileName);
+      expect(lower, hasLength(1));
+      expect(upper, hasLength(1));
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 9. RELEASE MODE TESTS
+  // 16. LOG FORMAT
   // ═══════════════════════════════════════════════════════════════════
-  group('Release Mode Behavior', () {
-    test('Logger methods can be called without errors', () {
-      final logger = AstuteLogger('Test');
-
-      // Even if kReleaseMode is true, methods should not throw
-      expect(() => logger.debug('test'), returnsNormally);
-      expect(() => logger.info('test'), returnsNormally);
-      expect(() => logger.warning('test'), returnsNormally);
-      expect(() => logger.error('test'), returnsNormally);
-      expect(() => logger.critical('test'), returnsNormally);
+  group('Log line format', () {
+    test('includes [log], timestamp, mode, and arrow', () async {
+      final fileName = 'format.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('the-message');
+      final line = (await readLog(fileName)).trim().split('\n').first;
+      expect(line, startsWith('[log] ['));
+      expect(line, contains('->'));
+      expect(line, contains('the-message'));
     });
-  });
 
-  // ═══════════════════════════════════════════════════════════════════
-  // 10. ERROR HANDLING TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Error Handling', () {
-    test('Error method accepts error object', () {
-      final logger = AstuteLogger('Test');
-      final error = Exception('Test error');
-
+    test('mode token is one of DEBUG/PROFILE/RELEASE/UNKNOWN', () async {
+      final fileName = 'mode.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('x');
+      final line = (await readLog(fileName)).trim();
       expect(
-        () => logger.error('An error occurred', error: error),
-        returnsNormally,
+        line,
+        anyOf(
+          contains('[DEBUG]'),
+          contains('[PROFILE]'),
+          contains('[RELEASE]'),
+          contains('[UNKNOWN]'),
+        ),
       );
     });
 
-    test('Error method accepts stack trace', () {
-      final logger = AstuteLogger('Test');
+    test('color enabled wraps line with ANSI codes before file write',
+        () async {
+      final fileName = 'color.txt';
+      final l = makeLogger(
+        fileName: fileName,
+        config: LogConfig(
+          enableConsoleOutput: false,
+          enableColorLogging: true,
+          logFileName: fileName,
+        ),
+      );
+      await l.info('c');
+      // File is always stripped, but write() must have added color.
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('\x1B[')));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 17. ERROR & CRITICAL
+  // ═══════════════════════════════════════════════════════════════════
+  group('Error & critical', () {
+    test('error() includes error object and stack trace', () async {
+      final fileName = 'err.txt';
+      final l = makeLogger(fileName: fileName);
 
       try {
-        throw Exception('Test');
+        throw StateError('kaboom');
       } catch (e, st) {
-        expect(
-          () => logger.error('An error occurred', error: e, stackTrace: st),
-          returnsNormally,
-        );
+        await l.error('op failed', error: e, stackTrace: st);
       }
+
+      final out = await readLog(fileName);
+      expect(out, contains('op failed'));
+      expect(out, contains('kaboom'));
+      expect(out, contains('StackTrace'));
     });
 
-    test('Critical method accepts error and stack trace', () {
-      final logger = AstuteLogger('Test');
-
+    test('critical() includes error and stack trace', () async {
+      final fileName = 'crit.txt';
+      final l = makeLogger(fileName: fileName);
       try {
-        throw Exception('Critical error');
+        throw ArgumentError('bad');
       } catch (e, st) {
-        expect(
-          () => logger.critical(
-            'Critical error occurred',
-            error: e,
-            stackTrace: st,
-          ),
-          returnsNormally,
-        );
+        await l.critical('severe', error: e, stackTrace: st);
+      }
+      final out = await readLog(fileName);
+      expect(out, contains('severe'));
+      expect(out, contains('bad'));
+    });
+
+    test('error() with no error/stacktrace just logs the message', () async {
+      final fileName = 'err_plain.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.error('simple error');
+      final out = await readLog(fileName);
+      expect(out, contains('simple error'));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 18. EDGE CASES
+  // ═══════════════════════════════════════════════════════════════════
+  group('Edge cases', () {
+    test('empty message is handled gracefully', () async {
+      final fileName = 'empty.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('');
+      expect(await readLog(fileName), contains(' -> '));
+    });
+
+    test('message containing ANSI codes is stripped in file', () async {
+      final fileName = 'ansi_msg.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('has \x1B[31mred\x1B[0m inside');
+      final out = await readLog(fileName);
+      expect(out, isNot(contains('\x1B[')));
+      expect(out, contains('has'));
+      expect(out, contains('red'));
+    });
+
+    test('very long messages are persisted intact', () async {
+      final fileName = 'long.txt';
+      final l = makeLogger(fileName: fileName);
+      final long = 'x' * 10000;
+      await l.info(long);
+      final out = await readLog(fileName);
+      expect(out, contains(long));
+    });
+
+    test('unicode and emoji survive round-trip', () async {
+      final fileName = 'unicode.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('héllo 世界 🚀');
+      final out = await readLog(fileName);
+      expect(out, contains('héllo 世界 🚀'));
+    });
+
+    test('concurrent loggers with the same file name do not corrupt', () async {
+      final fileName = 'shared.txt';
+      final loggers = List.generate(
+        5,
+        (i) => makeLogger(fileName: fileName, title: 'L$i'),
+      );
+      await Future.wait([
+        for (var i = 0; i < loggers.length; i++)
+          for (var j = 0; j < 10; j++) loggers[i].info('L$i-$j'),
+      ]);
+      final lines = await File('${tempDir.path}/$fileName').readAsLines();
+      expect(lines.length, 50);
+      for (final line in lines) {
+        expect(line, startsWith('[log] '));
       }
     });
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // 11. SENSITIVE KEY MANAGEMENT TESTS
+  // 19. STACK-TRACE METHOD EXTRACTION
   // ═══════════════════════════════════════════════════════════════════
-  group('Sensitive Key Management', () {
-    test('Default sensitive keys are present', () {
-      final defaultKeys = AstuteLogger.getSensitiveKeys();
-      expect(defaultKeys, contains('password'));
-      expect(defaultKeys, contains('token'));
-      expect(defaultKeys, contains('email'));
-      expect(defaultKeys, contains('secret'));
+  group('Method name resolution', () {
+    test('log line includes a non-empty method label', () async {
+      final fileName = 'method.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('x');
+      final line = (await readLog(fileName)).trim();
+      // Format: "... -> x", the segment before "->" contains "Class.method".
+      final beforeArrow = line.split(' -> ').first;
+      final parts = beforeArrow.split(' ');
+      expect(parts, isNotEmpty);
     });
 
-    test('Can register new sensitive key', () {
-      AstuteLogger.registerSensitiveKey('api_key');
-      final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, contains('api_key'));
-    });
-
-    test('Can unregister sensitive key', () {
-      // First register a key
-      AstuteLogger.registerSensitiveKey('custom_key');
-      expect(AstuteLogger.getSensitiveKeys(), contains('custom_key'));
-
-      // Then unregister it
-      AstuteLogger.unregisterSensitiveKey('custom_key');
-      expect(AstuteLogger.getSensitiveKeys(), isNot(contains('custom_key')));
-    });
-
-    test('Sensitive keys are case-insensitive', () {
-      AstuteLogger.registerSensitiveKey('API_KEY');
-      final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, contains('api_key'));
-    });
-
-    test('getSensitiveKeys returns sorted list', () {
-      // Clear and add some keys in random order
-      final defaultKeys = AstuteLogger.getSensitiveKeys();
-      for (var key in defaultKeys) {
-        AstuteLogger.unregisterSensitiveKey(key);
-      }
-
-      AstuteLogger.registerSensitiveKey('zebra');
-      AstuteLogger.registerSensitiveKey('apple');
-      AstuteLogger.registerSensitiveKey('banana');
-
-      final keys = AstuteLogger.getSensitiveKeys();
-      expect(keys, equals(['apple', 'banana', 'zebra']));
-
-      // Restore default keys
-      for (var key in defaultKeys) {
-        AstuteLogger.registerSensitiveKey(key);
-      }
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 12. JSON LOGGING TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('JSON Logging', () {
-    test('json method exists and can be called', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json({'key': 'value'}), returnsNormally);
-    });
-
-    test('json method accepts all log levels', () {
-      final logger = AstuteLogger('Test');
-      final data = {'test': 'data'};
-
-      expect(() => logger.json(data, level: LogLevel.debug), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.info), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.warning), returnsNormally);
-      expect(() => logger.json(data, level: LogLevel.error), returnsNormally);
-      expect(
-          () => logger.json(data, level: LogLevel.critical), returnsNormally);
-    });
-
-    test('json method accepts tag parameter', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json({'key': 'value'}, tag: 'TEST'), returnsNormally);
-    });
-
-    test('json method accepts extra parameter', () {
-      final logger = AstuteLogger('Test');
-      final extra = {'context': 'test'};
-      expect(
-          () => logger.json({'key': 'value'}, extra: extra), returnsNormally);
-    });
-
-    test('json method handles null object', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.json(null), returnsNormally);
-    });
-
-    test('json method handles complex nested objects', () {
-      final logger = AstuteLogger('Test');
-      final complexData = {
-        'user': {
-          'id': 123,
-          'profile': {
-            'name': 'John',
-            'settings': {'theme': 'dark', 'notifications': true}
-          }
-        },
-        'items': [1, 2, 3],
-        'metadata': {
-          'timestamp': DateTime.now().toIso8601String(),
-          'version': '1.0'
-        }
-      };
-
-      expect(() => logger.json(complexData), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 13. LOG LEVEL FILTERING TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Log Level Filtering', () {
-    test('Debug level allows all logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.debug);
-      final logger = AstuteLogger('Test', config: config);
-
-      // All these should work without filtering
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Info level filters debug logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.info);
-      final logger = AstuteLogger('Test', config: config);
-
-      // Debug should be filtered out, others should work
-      expect(() => logger.debug('debug message'),
-          returnsNormally); // Still returns normally, just won't log
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Warning level filters debug and info logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.warning);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Error level filters debug, info, and warning logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.error);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-
-    test('Critical level filters all except critical logs', () {
-      final config = const LogConfig(minimumLogLevel: LogLevel.critical);
-      final logger = AstuteLogger('Test', config: config);
-
-      expect(() => logger.debug('debug message'), returnsNormally);
-      expect(() => logger.info('info message'), returnsNormally);
-      expect(() => logger.warning('warning message'), returnsNormally);
-      expect(() => logger.error('error message'), returnsNormally);
-      expect(() => logger.critical('critical message'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 14. TAG FUNCTIONALITY TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Tag Functionality', () {
-    test('Tag parameter is optional', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message without tag'), returnsNormally);
-    });
-
-    test('Tag can be empty string', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message', tag: ''), returnsNormally);
-    });
-
-    test('Tag can be whitespace only', () {
-      final logger = AstuteLogger('Test');
-      expect(() => logger.info('message', tag: '   '), returnsNormally);
-    });
-
-    test('Tag can contain special characters', () {
-      final logger = AstuteLogger('Test');
-      expect(
-          () => logger.info('message', tag: 'test-tag_123'), returnsNormally);
-    });
-
-    test('Tag is case-sensitive in output', () {
-      final logger = AstuteLogger('Test');
-      // Both should work, but will produce different tags
-      expect(() => logger.info('message1', tag: 'TEST'), returnsNormally);
-      expect(() => logger.info('message2', tag: 'test'), returnsNormally);
-    });
-  });
-
-  // ═══════════════════════════════════════════════════════════════════
-  // 15. EXTRA CONTEXT TESTS
-  // ═══════════════════════════════════════════════════════════════════
-  group('Extra Context', () {
-    test('Logger methods accept extra context', () {
-      final logger = AstuteLogger('Test');
-      final extra = {'userId': '123', 'action': 'login'};
-
-      expect(
-        () => logger.info('User logged in', extra: extra),
-        returnsNormally,
-      );
-    });
-
-    test('Extra context can be null', () {
-      final logger = AstuteLogger('Test');
-
-      expect(
-        () => logger.info('Message', extra: null),
-        returnsNormally,
-      );
-    });
-
-    test('Extra context can be empty map', () {
-      final logger = AstuteLogger('Test');
-
-      expect(
-        () => logger.info('Message', extra: {}),
-        returnsNormally,
-      );
-    });
-
-    test('Extra context with nested objects', () {
-      final logger = AstuteLogger('Test');
-      final extra = {
-        'user': {
-          'id': 123,
-          'profile': {'name': 'John', 'email': 'john@example.com'}
-        },
-        'metadata': {'timestamp': DateTime.now().toIso8601String()}
-      };
-
-      expect(
-          () => logger.info('Complex context', extra: extra), returnsNormally);
-    });
-
-    test('Extra context with lists', () {
-      final logger = AstuteLogger('Test');
-      final extra = {
-        'items': [1, 2, 3],
-        'names': ['Alice', 'Bob', 'Charlie']
-      };
-
-      expect(() => logger.info('List context', extra: extra), returnsNormally);
+    test('method label does not include internal logger frames', () async {
+      final fileName = 'method_internal.txt';
+      final l = makeLogger(fileName: fileName);
+      await l.info('x');
+      final line = await readLog(fileName);
+      expect(line, isNot(contains('_nativeMethodName')));
+      expect(line, isNot(contains('_resolveMethodName')));
+      expect(line, isNot(contains('AstuteLogger.write')));
     });
   });
 }

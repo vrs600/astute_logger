@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:astute_logger/astute_logger.dart';
 
@@ -14,6 +16,8 @@ class LoggingInterceptor extends Interceptor {
   final bool logRequestBody;
   final bool logResponseHeaders;
   final bool logResponseBody;
+  final int maxBodyLength;
+  final int maxHeaderValueLength;
 
   /// Creates a new LoggingInterceptor.
   ///
@@ -22,13 +26,18 @@ class LoggingInterceptor extends Interceptor {
   /// [logRequestBody] - Whether to log request body (default: true)
   /// [logResponseHeaders] - Whether to log response headers (default: true)
   /// [logResponseBody] - Whether to log response body (default: true)
+  /// [maxBodyLength] - Maximum logged body length (default: 2000)
+  /// [maxHeaderValueLength] - Maximum logged header value length (default: 500)
   LoggingInterceptor({
     required this.logger,
     this.logRequestHeaders = true,
     this.logRequestBody = true,
     this.logResponseHeaders = true,
     this.logResponseBody = true,
-  });
+    this.maxBodyLength = 2000,
+    this.maxHeaderValueLength = 500,
+  })  : assert(maxBodyLength >= 0),
+        assert(maxHeaderValueLength >= 0);
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
@@ -45,7 +54,7 @@ class LoggingInterceptor extends Interceptor {
     }
 
     if (logRequestBody && options.data != null) {
-      requestLog.write('\nBody: ${options.data}');
+      requestLog.write('\nBody: ${_formatBody(options.data)}');
     }
 
     logger.info(requestLog.toString(), tag: 'HTTP');
@@ -71,7 +80,7 @@ class LoggingInterceptor extends Interceptor {
     }
 
     if (logResponseBody && response.data != null) {
-      responseLog.write('\nBody: ${response.data}');
+      responseLog.write('\nBody: ${_formatBody(response.data)}');
     }
 
     logger.info(responseLog.toString(), tag: 'HTTP');
@@ -100,7 +109,7 @@ class LoggingInterceptor extends Interceptor {
     }
 
     if (logRequestBody && err.requestOptions.data != null) {
-      errorLog.write('\nRequest Body: ${err.requestOptions.data}');
+      errorLog.write('\nRequest Body: ${_formatBody(err.requestOptions.data)}');
     }
 
     if (logResponseHeaders && err.response != null) {
@@ -109,11 +118,11 @@ class LoggingInterceptor extends Interceptor {
     }
 
     if (err.response != null && logResponseBody && err.response!.data != null) {
-      errorLog.write('\nResponse Body: ${err.response!.data}');
+      errorLog.write('\nResponse Body: ${_formatBody(err.response!.data)}');
     }
 
     if (err.message != null) {
-      errorLog.write('\nError: ${err.message}');
+      errorLog.write('\nError: ${_formatBody(err.message)}');
     }
 
     errorLog.write('\nType: ${err.type}');
@@ -121,6 +130,40 @@ class LoggingInterceptor extends Interceptor {
     logger.error(errorLog.toString(), tag: 'HTTP');
 
     super.onError(err, handler);
+  }
+
+  String _formatBody(Object? data) {
+    late final String body;
+    if (data is Map || data is List) {
+      body = jsonEncode(logger.redactObject(data));
+    } else if (data is String) {
+      try {
+        final decoded = jsonDecode(data);
+        body = jsonEncode(logger.redactObject(decoded));
+      } on FormatException {
+        body = data;
+      }
+    } else if (data is FormData) {
+      final fields = data.fields.map((field) => field.key).join(', ');
+      final files = data.files.map((file) {
+        final pathParts = (file.value.filename ?? '').split(RegExp(r'[/\\]'));
+        final fileName = pathParts.isEmpty || pathParts.last.isEmpty
+            ? '<unnamed>'
+            : pathParts.last;
+        return '${file.key}: $fileName';
+      }).join(', ');
+
+      body = 'FormData(fields: [$fields], files: [$files])';
+    } else {
+      body = data.toString();
+    }
+
+    return _truncate(body);
+  }
+
+  String _truncate(String text) {
+    if (text.length <= maxBodyLength) return text;
+    return '${text.substring(0, maxBodyLength)}... [truncated, total ${text.length} chars]';
   }
 
   /// Redacts sensitive headers like Authorization from the headers map.
@@ -149,6 +192,15 @@ class LoggingInterceptor extends Interceptor {
       }
     }
 
+    redactedHeaders.updateAll(
+      (key, value) => _truncateHeaderValue(value.toString()),
+    );
+
     return redactedHeaders;
+  }
+
+  String _truncateHeaderValue(String value) {
+    if (value.length <= maxHeaderValueLength) return value;
+    return '${value.substring(0, maxHeaderValueLength)}... [truncated, total ${value.length} chars]';
   }
 }

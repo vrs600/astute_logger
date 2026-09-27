@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -7,6 +8,9 @@ import 'package:path_provider/path_provider.dart';
 
 /// Represents the severity level of a log message.
 enum LogLevel { debug, info, warning, error, critical }
+
+/// Represents the current Flutter application mode.
+enum AppMode { debug, profile, release, unknown }
 
 /// Defines ANSI color codes for terminal logging.
 enum LogColor {
@@ -24,13 +28,24 @@ enum LogColor {
 class _LogEvent {
   final AstuteLogger logger;
   final String text;
+  final Object? rawMessage;
+  final String messageBody;
   final bool prettyPrint;
 
   const _LogEvent({
     required this.logger,
     required this.text,
+    required this.rawMessage,
+    required this.messageBody,
     required this.prettyPrint,
   });
+}
+
+class _QueuedLogEvent {
+  final _LogEvent event;
+  final Completer<void> completion = Completer<void>();
+
+  _QueuedLogEvent(this.event);
 }
 
 /// Provides utilities for managing logging context across asynchronous operations.
@@ -62,6 +77,11 @@ class LogConfig {
   final String logFileName;
   final bool enableColorLogging;
 
+  /// Whether email addresses are redacted. Disabling this can improve
+  /// observability during debugging, but may expose personally identifiable
+  /// information in logs.
+  final bool redactEmails;
+
   const LogConfig({
     this.enableRedaction = true,
     this.minimumLogLevel = LogLevel.debug,
@@ -69,6 +89,7 @@ class LogConfig {
     this.enableFileOutput = true,
     this.logFileName = 'app_logs.txt',
     this.enableColorLogging = true,
+    this.redactEmails = true,
   });
 }
 
@@ -85,35 +106,47 @@ class AstuteLogger {
   // ------------------------------------------------------------------
   // 📥 Async Logging Queue Pipeline
   // ------------------------------------------------------------------
-  static final StreamController<_LogEvent> _queueController =
-      StreamController<_LogEvent>()..stream.listen(_processLogQueue);
+  static const int _maxPendingLogEvents = 1024;
+  static final Queue<_QueuedLogEvent> _logQueue = Queue<_QueuedLogEvent>();
+  static final Queue<Completer<void>> _queueSlotWaiters =
+      Queue<Completer<void>>();
+  static int _availableQueueSlots = _maxPendingLogEvents;
+  static bool _isProcessingLogQueue = false;
 
   static final Map<String, File> _logFilesCache = {};
 
   /// Dynamic access utility method to retrieve the raw file containing persisted logs by name
+  /// The cache avoids repeated platform-channel calls and keeps a stable File identity per path.
   static Future<File?> getLogFile({String fileName = 'app_logs.txt'}) async {
     try {
-      if (_logFilesCache.containsKey(fileName)) return _logFilesCache[fileName];
+      final cached = _logFilesCache[fileName];
+      if (cached != null) return cached;
       final directory = await getApplicationDocumentsDirectory();
-      return File('${directory.path}/$fileName');
+      final file = File('${directory.path}/$fileName');
+      _logFilesCache[fileName] = file;
+      return file;
     } catch (_) {
       return null;
     }
   }
 
-  /// Retrieves log lines that contain the specified tag.
+  /// Retrieves log lines that contain the specified tag from an existing file.
   ///
   /// Reads the log file, filters lines containing [tag] in the format [TAG],
   /// strips ANSI color codes, and returns the matching log lines.
+  /// This is a static utility and is not tied to any logger instance's config.
   ///
   /// Parameters:
   ///   - tag: The tag to filter logs by (case-insensitive)
+  ///   - fileName: The existing log file to read
   ///
   /// Returns a Future containing a list of matching log lines with ANSI codes removed.
-  static Future<List<String>> getLogsByTag(String tag) async {
+  static Future<List<String>> getLogsByTag(
+    String tag, {
+    String fileName = 'app_logs.txt',
+  }) async {
     try {
-      // Get the default log file
-      final logFile = await getLogFile();
+      final logFile = await getLogFile(fileName: fileName);
       if (logFile == null || !(await logFile.exists())) {
         return [];
       }
@@ -150,19 +183,21 @@ class AstuteLogger {
   }
 
   /// Writes a log message with the specified level and optional metadata.
-  void write({
+  Future<void> write({
     required String message,
     bool prettyPrint = false,
     required LogLevel level,
     Map<String, dynamic>? extra,
     String? tag,
   }) {
-    if (kReleaseMode) return;
+    if (kReleaseMode) return Future<void>.value();
 
     final tagText =
         tag != null && tag.trim().isNotEmpty ? '[${tag.toUpperCase()}] ' : '';
 
-    if (level.index < config.minimumLogLevel.index) return;
+    if (level.index < config.minimumLogLevel.index) {
+      return Future<void>.value();
+    }
 
     final scrubbedMessage =
         config.enableRedaction ? _redactSensitiveData(message) : message;
@@ -197,31 +232,100 @@ class AstuteLogger {
         "${_two(now.hour)}:${_two(now.minute)}:${_two(now.second)}";
 
     String logText =
-        "[log] [$localTimestamp] [${getAppMode().name.toUpperCase()}] $tagText$contextTag$methodLabel -> $scrubbedMessage";
+        "[log] [$localTimestamp] [${appMode.name.toUpperCase()}] $tagText$contextTag$methodLabel -> $scrubbedMessage";
 
     if (config.enableColorLogging) {
       logText = _colorize(logText, _getColorForLevel(level));
     }
 
-    _queueController.add(_LogEvent(
+    return _enqueueLogEvent(_LogEvent(
       logger: this,
       text: logText,
+      rawMessage: message,
+      messageBody: scrubbedMessage,
       prettyPrint: prettyPrint,
     ));
+  }
+
+  static Future<void> _enqueueLogEvent(_LogEvent event) async {
+    if (_availableQueueSlots == 0) {
+      final slotAvailable = Completer<void>();
+      _queueSlotWaiters.add(slotAvailable);
+      await slotAvailable.future;
+    } else {
+      _availableQueueSlots--;
+    }
+
+    final queuedEvent = _QueuedLogEvent(event);
+    _logQueue.add(queuedEvent);
+    _startLogQueueWorker();
+    await queuedEvent.completion.future;
+  }
+
+  static void _startLogQueueWorker() {
+    if (_isProcessingLogQueue) return;
+    _isProcessingLogQueue = true;
+    unawaited(_drainLogQueue());
+  }
+
+  static Future<void> _drainLogQueue() async {
+    while (_logQueue.isNotEmpty) {
+      final queuedEvent = _logQueue.first;
+      try {
+        await _processLogQueue(queuedEvent.event);
+        queuedEvent.completion.complete();
+      } catch (error, stackTrace) {
+        queuedEvent.completion.completeError(error, stackTrace);
+      } finally {
+        _logQueue.removeFirst();
+        if (_queueSlotWaiters.isNotEmpty) {
+          _queueSlotWaiters.removeFirst().complete();
+        } else {
+          _availableQueueSlots++;
+        }
+      }
+    }
+    _isProcessingLogQueue = false;
+  }
+
+  @visibleForTesting
+  static Future<void> flush() async {
+    while (_isProcessingLogQueue || _logQueue.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
+
+  @visibleForTesting
+  static void resetFileCache() {
+    _logFilesCache.clear();
   }
 
   /// Processes log events asynchronously, handling console and file output.
   static Future<void> _processLogQueue(_LogEvent event) async {
     final config = event.logger.config;
 
-    // Format JSON separately if prettyPrint
     String outputText = event.text;
     if (event.prettyPrint) {
-      try {
-        final decoded = jsonDecode(event.text);
-        outputText = const JsonEncoder.withIndent('  ').convert(decoded);
-      } catch (_) {
-        // If decoding fails, use original text
+      final decoded = _tryDecodeJson(event.rawMessage);
+      if (decoded != null) {
+        final redacted = config.enableRedaction
+            ? event.logger._redactObject(decoded)
+            : decoded;
+        final prettyMessage =
+            const JsonEncoder.withIndent('  ').convert(redacted);
+        const colorReset = '\x1B[0m';
+        final hasColorReset = outputText.endsWith(colorReset);
+        final messageEnd = hasColorReset
+            ? outputText.length - colorReset.length
+            : outputText.length;
+        final messageStart = messageEnd - event.messageBody.length;
+        if (messageStart >= 0 &&
+            outputText.substring(messageStart, messageEnd) ==
+                event.messageBody) {
+          outputText = outputText.substring(0, messageStart) +
+              prettyMessage +
+              outputText.substring(messageEnd);
+        }
       }
     }
 
@@ -238,15 +342,34 @@ class AstuteLogger {
       }
       final file = _logFilesCache[fileName]!;
       final cleanText = outputText.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
-      await file.writeAsString(
-        '$cleanText\n',
-        mode: FileMode.append,
-        flush: true,
-      );
+      await _appendToFile(file, '$cleanText\n');
     } catch (e) {
       log('Failed to write log to persistent file storage: $e',
           name: 'LoggerError');
     }
+  }
+
+  static Future<void> _appendToFile(File file, String text) async {
+    final sink = file.openWrite(mode: FileMode.append);
+    try {
+      sink.write(text);
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+  }
+
+  static Object? _tryDecodeJson(Object? value) {
+    if (value == null) return null;
+    if (value is Map || value is List) return value;
+    if (value is String) {
+      try {
+        return jsonDecode(value);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // ------------------------------------------------------------------
@@ -266,16 +389,20 @@ class AstuteLogger {
   ///
   /// Frame index 3 skips: [0] _nativeMethodName, [1] _resolveMethodName,
   /// [2] write, [3] = your actual caller.
+  /// Examples: `#0 Foo.bar (package:app/foo.dart:10:5)` -> `Foo.bar`;
+  /// `#1 Foo.bar$closure` -> `Foo.bar$closure`.
   String _nativeMethodName() {
     try {
       final frames = StackTrace.current.toString().split('\n');
 
-      // Iterate past framework internals to discover true business logic caller
+      // Find the first frame outside the logger implementation.
       for (final frame in frames) {
         if (frame.isEmpty) continue;
 
-        final vmRegex = RegExp(r'#\d+\s+([\w.<>]+)\s+\(');
-        final vmMatch = vmRegex.firstMatch(frame);
+        final vmRegex = RegExp(r'#\d+\s+([\w.<>$]+)\s+\(');
+        final fallbackRegex = RegExp(r'#\d+\s+([\w.<>$]+)');
+        final vmMatch =
+            vmRegex.firstMatch(frame) ?? fallbackRegex.firstMatch(frame);
 
         if (vmMatch != null) {
           final full = vmMatch.group(1)!;
@@ -305,12 +432,17 @@ class AstuteLogger {
   /// Measures and logs the execution time of a synchronous function.
   T logExecutionTime<T>(String message, T Function() func) {
     final stopwatch = Stopwatch()..start();
-    final result = func();
-    stopwatch.stop();
-    write(
-      message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
-      level: LogLevel.debug,
-    );
+    late final T result;
+    try {
+      result = func();
+    } finally {
+      // Stop and log even when the measured function throws.
+      stopwatch.stop();
+      write(
+        message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
+        level: LogLevel.debug,
+      );
+    }
     return result;
   }
 
@@ -334,12 +466,12 @@ class AstuteLogger {
     }
   }
 
-  /// Determines the current application mode (debug, profile, release).
-  LogLevel getAppMode() {
-    if (kDebugMode) return LogLevel.debug;
-    if (kProfileMode) return LogLevel.info;
-    if (kReleaseMode) return LogLevel.error;
-    return LogLevel.warning;
+  /// Determines the current application mode.
+  AppMode get appMode {
+    if (kDebugMode) return AppMode.debug;
+    if (kProfileMode) return AppMode.profile;
+    if (kReleaseMode) return AppMode.release;
+    return AppMode.unknown;
   }
 
   // ------------------------------------------------------------------
@@ -369,6 +501,9 @@ class AstuteLogger {
     return _sensitiveKeys.toList()..sort();
   }
 
+  /// Redacts sensitive values in nested maps and lists.
+  Object? redactObject(Object? value) => _redactObject(value);
+
   dynamic _redactObject(dynamic value) {
     if (value is Map) {
       return value.map((key, val) {
@@ -389,16 +524,18 @@ class AstuteLogger {
     return value;
   }
 
-  void json(
+  Future<void> json(
     Object? object, {
     LogLevel level = LogLevel.debug,
     String? tag,
     Map<String, dynamic>? extra,
   }) {
     final cleaned = _redactObject(object);
+    final decoded = _tryDecodeJson(jsonEncode(cleaned));
+    final prettyMessage = const JsonEncoder.withIndent('  ').convert(decoded);
 
-    write(
-      message: const JsonEncoder.withIndent("  ").convert(cleaned),
+    return write(
+      message: prettyMessage,
       level: level,
       prettyPrint: false,
       extra: extra,
@@ -406,17 +543,30 @@ class AstuteLogger {
     );
   }
 
-  static final List<RegExp> _redactionRules = [
-    // 1. Bearer / Authorization tokens
+  static final RegExp _emailRule = RegExp(
+    r'[a-zA-Z0-9.!#$%&'
+    r'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*',
+  );
+
+  static final RegExp _creditCardRule = RegExp(
+      r'\b(?:4[0-9]{12}(?:[0-9]{3})?|[5S][1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11})\b');
+
+  static final List<RegExp> _defaultRules = [
+    // Input: '"password": "p@ss!"' -> '"password": "[REDACTED]"'
     RegExp(
-        r'(?:bearer|auth|token|password|secret)["\s:][=\s"]*([a-zA-Z0-9_\-\.\~\+\/]+=*)',
-        caseSensitive: false),
-    // 2. Email Addresses
-    RegExp(r'[a-zA-Z0-9.!#$%&'
-        r'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*'),
-    // 3. Credit Cards (Visa, Mastercard, Amex, Discover structural matches)
+      r"""(?:bearer|auth|token|password|secret|api[_-]?key)\s*[:=]\s*["']([^"']+)["']""",
+      caseSensitive: false,
+    ),
+    // Input: 'Authorization: Bearer abc-123' -> 'Authorization: Bearer [REDACTED]'
     RegExp(
-        r'\b(?:4[0-9]{12}(?:[0-9]{3})?|[5S][1-5][0-9]{14}|6(?:011|5[0-9][0-9])[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|(?:2131|1800|35\d{3})\d{11})\b'),
+      r'Bearer\s+([A-Za-z0-9\-._~+/]+=*)',
+      caseSensitive: false,
+    ),
+    // Input: 'token:abc-123, count: 5' -> 'token:[REDACTED], count: 5'
+    RegExp(
+      r'(?:token|password|secret)\s*[:=]\s*([^\s,;]+)',
+      caseSensitive: false,
+    ),
   ];
 
   /// Redacts sensitive data from log messages using predefined rules.
@@ -424,20 +574,39 @@ class AstuteLogger {
     if (source.isEmpty) return source;
     String cleaned = source;
 
-    for (final rule in _redactionRules) {
+    if (config.redactEmails) {
+      cleaned = cleaned.replaceAll(_emailRule, '[REDACTED]');
+    }
+
+    for (final rule in _defaultRules) {
       cleaned = cleaned.replaceAllMapped(rule, (match) {
         final fullMatch = match.group(0)!;
         // If the match captures a specific secret group value (like group 1 in auth tokens), redact only that group
         if (match.groupCount >= 1 && match.group(1) != null) {
           final secret = match.group(1)!;
           if (secret.trim().isNotEmpty) {
-            return fullMatch.replaceFirst(secret, '[REDACTED]');
+            final groupStart = fullMatch.lastIndexOf(secret);
+            return fullMatch.replaceRange(
+              groupStart,
+              groupStart + secret.length,
+              '[REDACTED]',
+            );
           }
         }
         // Otherwise, replace the entire structured match value (like emails/cards)
         return '[REDACTED]';
       });
     }
+
+    cleaned = cleaned.replaceAllMapped(_creditCardRule, (match) {
+      if (!config.redactEmails &&
+          _emailRule.allMatches(cleaned).any((emailMatch) =>
+              emailMatch.start <= match.start && emailMatch.end >= match.end)) {
+        return match.group(0)!;
+      }
+      return '[REDACTED]';
+    });
+
     return cleaned;
   }
 
@@ -447,22 +616,27 @@ class AstuteLogger {
     Future<T> Function() func,
   ) async {
     final stopwatch = Stopwatch()..start();
-    final result = await func();
-    stopwatch.stop();
-    write(
-      message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
-      level: LogLevel.debug,
-    );
+    late final T result;
+    try {
+      result = await func();
+    } finally {
+      // Stop and log even when the measured function throws.
+      stopwatch.stop();
+      write(
+        message: "$message executed in ${stopwatch.elapsedMilliseconds} ms",
+        level: LogLevel.debug,
+      );
+    }
     return result;
   }
 
   /// Logs a debug-level message.
-  void debug(
+  Future<void> debug(
     String message, {
     Map<String, dynamic>? extra,
     String? tag,
   }) {
-    write(
+    return write(
       message: message,
       level: LogLevel.debug,
       extra: extra,
@@ -471,12 +645,12 @@ class AstuteLogger {
   }
 
   /// Logs an info-level message.
-  void info(
+  Future<void> info(
     String message, {
     Map<String, dynamic>? extra,
     String? tag,
   }) {
-    write(
+    return write(
       message: message,
       level: LogLevel.info,
       extra: extra,
@@ -485,12 +659,12 @@ class AstuteLogger {
   }
 
   /// Logs a warning-level message.
-  void warning(
+  Future<void> warning(
     String message, {
     Map<String, dynamic>? extra,
     String? tag,
   }) {
-    write(
+    return write(
       message: message,
       level: LogLevel.warning,
       extra: extra,
@@ -499,7 +673,7 @@ class AstuteLogger {
   }
 
   /// Logs an error-level message, optionally including an error and stack trace.
-  void error(
+  Future<void> error(
     String message, {
     Map<String, dynamic>? extra,
     Object? error,
@@ -513,7 +687,7 @@ class AstuteLogger {
     if (stackTrace != null) {
       combinedMessage.write('\nStackTrace:\n$stackTrace');
     }
-    write(
+    return write(
       message: combinedMessage.toString(),
       level: LogLevel.error,
       extra: extra,
@@ -522,7 +696,7 @@ class AstuteLogger {
   }
 
   /// Logs a critical-level message, optionally including an error and stack trace.
-  void critical(
+  Future<void> critical(
     String message, {
     Map<String, dynamic>? extra,
     Object? error,
@@ -536,7 +710,7 @@ class AstuteLogger {
     if (stackTrace != null) {
       combinedMessage.write('\nStackTrace:\n$stackTrace');
     }
-    write(
+    return write(
       message: combinedMessage.toString(),
       level: LogLevel.critical,
       extra: extra,
